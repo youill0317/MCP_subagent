@@ -4,14 +4,20 @@ import { OpenAIClient } from "./openai-client.js";
 import { AnthropicClient } from "./anthropic-client.js";
 import { GoogleClient } from "./google-client.js";
 
-export function createLLMClient(provider: LLMProvider, apiKey: string): LLMClient {
+export interface LLMBaseUrls {
+  openai: string;
+  anthropic: string;
+  google: string;
+}
+
+export function createLLMClient(provider: LLMProvider, apiKey: string, baseUrls: LLMBaseUrls): LLMClient {
   switch (provider) {
     case "openai":
-      return new OpenAIClient(apiKey);
+      return new OpenAIClient(apiKey, baseUrls.openai);
     case "anthropic":
-      return new AnthropicClient(apiKey);
+      return new AnthropicClient(apiKey, baseUrls.anthropic);
     case "google":
-      return new GoogleClient(apiKey);
+      return new GoogleClient(apiKey, baseUrls.google);
     default:
       throw new Error(`Unknown provider: ${provider}`);
   }

@@ -31,9 +31,14 @@ interface OpenAICompletionResponse {
 
 export class OpenAIClient implements LLMClient {
   readonly provider = "openai";
-  private readonly baseUrl = "https://api.openai.com/v1";
+  private readonly baseUrl: string;
 
-  constructor(private readonly apiKey: string) {}
+  constructor(
+    private readonly apiKey: string,
+    baseUrl: string,
+  ) {
+    this.baseUrl = stripTrailingSlash(baseUrl);
+  }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
     const body: Record<string, unknown> = {
@@ -205,4 +210,8 @@ function normalizeAssistantText(content: Message["content"]): string {
     return content;
   }
   return "";
+}
+
+function stripTrailingSlash(value: string): string {
+  return value.replace(/\/+$/g, "");
 }

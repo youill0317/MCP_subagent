@@ -5,6 +5,7 @@ import type { AgentsConfig } from "../config/agents.js";
 import { getAgentConfig } from "../config/agents.js";
 import type { AppEnv } from "../config/env.js";
 import { createLLMClient } from "../llm/factory.js";
+import type { LLMBaseUrls } from "../llm/factory.js";
 import { MCPClientManager } from "../mcp-client/manager.js";
 import { TokenBucketRateLimiter } from "../utils/rate-limiter.js";
 
@@ -22,6 +23,7 @@ export type DelegateTaskFn = (
 
 export function createDelegateTaskExecutor(deps: DelegateTaskDeps): DelegateTaskFn {
   const providerRateLimiters = createProviderRateLimiters(deps.env);
+  const providerBaseUrls = createProviderBaseUrls(deps.env);
 
   return async (agentId: string, task: string, context?: string): Promise<AgentRunResult> => {
     const runId = randomUUID();
@@ -33,7 +35,7 @@ export function createDelegateTaskExecutor(deps: DelegateTaskDeps): DelegateTask
         return createErrorResult(agentId, `${agentConfig.provider} API key is not configured`, runId);
       }
 
-      const llmClient = createLLMClient(agentConfig.provider, apiKey);
+      const llmClient = createLLMClient(agentConfig.provider, apiKey, providerBaseUrls);
       const abortController = new AbortController();
       const execution = runAgent(agentConfig, task, context, llmClient, deps.mcpManager, {
         signal: abortController.signal,
@@ -60,6 +62,14 @@ function createProviderRateLimiters(env: AppEnv): Record<"openai" | "anthropic" 
     openai: new TokenBucketRateLimiter(env.RATE_LIMIT_CAPACITY, env.RATE_LIMIT_REFILL_PER_SECOND),
     anthropic: new TokenBucketRateLimiter(env.RATE_LIMIT_CAPACITY, env.RATE_LIMIT_REFILL_PER_SECOND),
     google: new TokenBucketRateLimiter(env.RATE_LIMIT_CAPACITY, env.RATE_LIMIT_REFILL_PER_SECOND),
+  };
+}
+
+function createProviderBaseUrls(env: AppEnv): LLMBaseUrls {
+  return {
+    openai: env.OPENAI_BASE_URL,
+    anthropic: env.ANTHROPIC_BASE_URL,
+    google: env.GOOGLE_BASE_URL,
   };
 }
 

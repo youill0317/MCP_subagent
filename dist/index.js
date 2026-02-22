@@ -116,6 +116,9 @@ var logger = new Logger(configuredLevel);
 
 // src/config/env.ts
 var PROVIDERS = ["openai", "anthropic", "google"];
+var DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
+var DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1";
+var DEFAULT_GOOGLE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 var BooleanEnvSchema = z2.preprocess((value) => {
   if (typeof value === "boolean") {
     return value;
@@ -136,6 +139,9 @@ var EnvSchema = z2.object({
   OPENAI_API_KEY: z2.string().trim().optional(),
   ANTHROPIC_API_KEY: z2.string().trim().optional(),
   GOOGLE_API_KEY: z2.string().trim().optional(),
+  OPENAI_BASE_URL: z2.string().trim().optional(),
+  ANTHROPIC_BASE_URL: z2.string().trim().optional(),
+  GOOGLE_BASE_URL: z2.string().trim().optional(),
   DEFAULT_PROVIDER: z2.enum(PROVIDERS).default("anthropic"),
   DEFAULT_MODEL: z2.string().trim().min(1).default("claude-sonnet-4-20250514"),
   MAX_AGENT_ITERATIONS: z2.coerce.number().int().positive().default(15),
@@ -156,6 +162,9 @@ function loadEnv(envPath = path2.resolve(process.cwd(), ".env")) {
     OPENAI_API_KEY: normalizeOptional(parsed.OPENAI_API_KEY),
     ANTHROPIC_API_KEY: normalizeOptional(parsed.ANTHROPIC_API_KEY),
     GOOGLE_API_KEY: normalizeOptional(parsed.GOOGLE_API_KEY),
+    OPENAI_BASE_URL: normalizeBaseUrl(parsed.OPENAI_BASE_URL, DEFAULT_OPENAI_BASE_URL),
+    ANTHROPIC_BASE_URL: normalizeBaseUrl(parsed.ANTHROPIC_BASE_URL, DEFAULT_ANTHROPIC_BASE_URL),
+    GOOGLE_BASE_URL: normalizeBaseUrl(parsed.GOOGLE_BASE_URL, DEFAULT_GOOGLE_BASE_URL),
     DEFAULT_PROVIDER: parsed.DEFAULT_PROVIDER,
     DEFAULT_MODEL: parsed.DEFAULT_MODEL,
     MAX_AGENT_ITERATIONS: parsed.MAX_AGENT_ITERATIONS,
@@ -201,6 +210,13 @@ function normalizeOptional(value) {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : void 0;
+}
+function normalizeBaseUrl(value, fallback) {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) {
+    return fallback;
+  }
+  return trimmed.replace(/\/+$/g, "");
 }
 
 // src/config/mcp-servers.ts
@@ -893,11 +909,12 @@ function sleepWithAbort(ms, signal) {
 
 // src/llm/openai-client.ts
 var OpenAIClient = class {
-  constructor(apiKey) {
+  constructor(apiKey, baseUrl) {
     this.apiKey = apiKey;
+    this.baseUrl = stripTrailingSlash(baseUrl);
   }
   provider = "openai";
-  baseUrl = "https://api.openai.com/v1";
+  baseUrl;
   async chat(request) {
     const body = {
       model: request.model,
@@ -1028,14 +1045,18 @@ function normalizeAssistantText(content) {
   }
   return "";
 }
+function stripTrailingSlash(value) {
+  return value.replace(/\/+$/g, "");
+}
 
 // src/llm/anthropic-client.ts
 var AnthropicClient = class {
-  constructor(apiKey) {
+  constructor(apiKey, baseUrl) {
     this.apiKey = apiKey;
+    this.baseUrl = stripTrailingSlash2(baseUrl);
   }
   provider = "anthropic";
-  baseUrl = "https://api.anthropic.com/v1";
+  baseUrl;
   async chat(request) {
     const response = await postJsonWithRetry(`${this.baseUrl}/messages`, {
       headers: {
@@ -1130,14 +1151,18 @@ function toAnthropicMessages(messages) {
   }
   return mapped;
 }
+function stripTrailingSlash2(value) {
+  return value.replace(/\/+$/g, "");
+}
 
 // src/llm/google-client.ts
 var GoogleClient = class {
-  constructor(apiKey) {
+  constructor(apiKey, baseUrl) {
     this.apiKey = apiKey;
+    this.baseUrl = stripTrailingSlash3(baseUrl);
   }
   provider = "google";
-  baseUrl = "https://generativelanguage.googleapis.com/v1beta";
+  baseUrl;
   async chat(request) {
     const generationConfig = {};
     if (typeof request.temperature === "number") {
@@ -1258,16 +1283,19 @@ function toGeminiContents(messages) {
   }
   return mapped;
 }
+function stripTrailingSlash3(value) {
+  return value.replace(/\/+$/g, "");
+}
 
 // src/llm/factory.ts
-function createLLMClient(provider, apiKey) {
+function createLLMClient(provider, apiKey, baseUrls) {
   switch (provider) {
     case "openai":
-      return new OpenAIClient(apiKey);
+      return new OpenAIClient(apiKey, baseUrls.openai);
     case "anthropic":
-      return new AnthropicClient(apiKey);
+      return new AnthropicClient(apiKey, baseUrls.anthropic);
     case "google":
-      return new GoogleClient(apiKey);
+      return new GoogleClient(apiKey, baseUrls.google);
     default:
       throw new Error(`Unknown provider: ${provider}`);
   }
@@ -1318,6 +1346,7 @@ function sleep(ms) {
 // src/orchestrator/delegate.ts
 function createDelegateTaskExecutor(deps) {
   const providerRateLimiters = createProviderRateLimiters(deps.env);
+  const providerBaseUrls = createProviderBaseUrls(deps.env);
   return async (agentId, task, context) => {
     const runId = randomUUID();
     try {
@@ -1326,7 +1355,7 @@ function createDelegateTaskExecutor(deps) {
       if (!apiKey) {
         return createErrorResult(agentId, `${agentConfig.provider} API key is not configured`, runId);
       }
-      const llmClient = createLLMClient(agentConfig.provider, apiKey);
+      const llmClient = createLLMClient(agentConfig.provider, apiKey, providerBaseUrls);
       const abortController = new AbortController();
       const execution = runAgent(agentConfig, task, context, llmClient, deps.mcpManager, {
         signal: abortController.signal,
@@ -1351,6 +1380,13 @@ function createProviderRateLimiters(env) {
     openai: new TokenBucketRateLimiter(env.RATE_LIMIT_CAPACITY, env.RATE_LIMIT_REFILL_PER_SECOND),
     anthropic: new TokenBucketRateLimiter(env.RATE_LIMIT_CAPACITY, env.RATE_LIMIT_REFILL_PER_SECOND),
     google: new TokenBucketRateLimiter(env.RATE_LIMIT_CAPACITY, env.RATE_LIMIT_REFILL_PER_SECOND)
+  };
+}
+function createProviderBaseUrls(env) {
+  return {
+    openai: env.OPENAI_BASE_URL,
+    anthropic: env.ANTHROPIC_BASE_URL,
+    google: env.GOOGLE_BASE_URL
   };
 }
 function createErrorResult(agentId, message, runId) {

@@ -24,9 +24,14 @@ interface AnthropicResponse {
 
 export class AnthropicClient implements LLMClient {
   readonly provider = "anthropic";
-  private readonly baseUrl = "https://api.anthropic.com/v1";
+  private readonly baseUrl: string;
 
-  constructor(private readonly apiKey: string) {}
+  constructor(
+    private readonly apiKey: string,
+    baseUrl: string,
+  ) {
+    this.baseUrl = stripTrailingSlash(baseUrl);
+  }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
     const response = await postJsonWithRetry<AnthropicResponse>(`${this.baseUrl}/messages`, {
@@ -148,4 +153,8 @@ function toAnthropicMessages(messages: Message[]): Array<{ role: "user" | "assis
   }
 
   return mapped;
+}
+
+function stripTrailingSlash(value: string): string {
+  return value.replace(/\/+$/g, "");
 }

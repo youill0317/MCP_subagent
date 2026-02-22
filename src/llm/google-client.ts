@@ -28,9 +28,14 @@ interface GeminiResponse {
 
 export class GoogleClient implements LLMClient {
   readonly provider = "google";
-  private readonly baseUrl = "https://generativelanguage.googleapis.com/v1beta";
+  private readonly baseUrl: string;
 
-  constructor(private readonly apiKey: string) {}
+  constructor(
+    private readonly apiKey: string,
+    baseUrl: string,
+  ) {
+    this.baseUrl = stripTrailingSlash(baseUrl);
+  }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
     const generationConfig: Record<string, unknown> = {};
@@ -182,4 +187,8 @@ function toGeminiContents(messages: Message[]): Array<{ role: "user" | "model"; 
   }
 
   return mapped;
+}
+
+function stripTrailingSlash(value: string): string {
+  return value.replace(/\/+$/g, "");
 }

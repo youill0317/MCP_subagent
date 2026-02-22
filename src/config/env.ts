@@ -4,6 +4,9 @@ import { z } from "zod";
 import { logger } from "../utils/logger.js";
 
 const PROVIDERS = ["openai", "anthropic", "google"] as const;
+const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
+const DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1";
+const DEFAULT_GOOGLE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 
 export type LLMProvider = (typeof PROVIDERS)[number];
 
@@ -11,6 +14,9 @@ export interface AppEnv {
   OPENAI_API_KEY?: string;
   ANTHROPIC_API_KEY?: string;
   GOOGLE_API_KEY?: string;
+  OPENAI_BASE_URL: string;
+  ANTHROPIC_BASE_URL: string;
+  GOOGLE_BASE_URL: string;
   DEFAULT_PROVIDER: LLMProvider;
   DEFAULT_MODEL: string;
   MAX_AGENT_ITERATIONS: number;
@@ -44,6 +50,9 @@ const EnvSchema = z.object({
   OPENAI_API_KEY: z.string().trim().optional(),
   ANTHROPIC_API_KEY: z.string().trim().optional(),
   GOOGLE_API_KEY: z.string().trim().optional(),
+  OPENAI_BASE_URL: z.string().trim().optional(),
+  ANTHROPIC_BASE_URL: z.string().trim().optional(),
+  GOOGLE_BASE_URL: z.string().trim().optional(),
   DEFAULT_PROVIDER: z.enum(PROVIDERS).default("anthropic"),
   DEFAULT_MODEL: z.string().trim().min(1).default("claude-sonnet-4-20250514"),
   MAX_AGENT_ITERATIONS: z.coerce.number().int().positive().default(15),
@@ -68,6 +77,9 @@ export function loadEnv(envPath = path.resolve(process.cwd(), ".env")): AppEnv {
     OPENAI_API_KEY: normalizeOptional(parsed.OPENAI_API_KEY),
     ANTHROPIC_API_KEY: normalizeOptional(parsed.ANTHROPIC_API_KEY),
     GOOGLE_API_KEY: normalizeOptional(parsed.GOOGLE_API_KEY),
+    OPENAI_BASE_URL: normalizeBaseUrl(parsed.OPENAI_BASE_URL, DEFAULT_OPENAI_BASE_URL),
+    ANTHROPIC_BASE_URL: normalizeBaseUrl(parsed.ANTHROPIC_BASE_URL, DEFAULT_ANTHROPIC_BASE_URL),
+    GOOGLE_BASE_URL: normalizeBaseUrl(parsed.GOOGLE_BASE_URL, DEFAULT_GOOGLE_BASE_URL),
     DEFAULT_PROVIDER: parsed.DEFAULT_PROVIDER,
     DEFAULT_MODEL: parsed.DEFAULT_MODEL,
     MAX_AGENT_ITERATIONS: parsed.MAX_AGENT_ITERATIONS,
@@ -121,4 +133,13 @@ function normalizeOptional(value: string | undefined): string | undefined {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizeBaseUrl(value: string | undefined, fallback: string): string {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) {
+    return fallback;
+  }
+
+  return trimmed.replace(/\/+$/g, "");
 }

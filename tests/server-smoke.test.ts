@@ -7,6 +7,9 @@ import { MCPClientManager } from "../src/mcp-client/manager.js";
 
 test("createServer smoke test", () => {
   const env: AppEnv = {
+    OPENAI_BASE_URL: "https://api.openai.com/v1",
+    ANTHROPIC_BASE_URL: "https://api.anthropic.com/v1",
+    GOOGLE_BASE_URL: "https://generativelanguage.googleapis.com/v1beta",
     DEFAULT_PROVIDER: "anthropic",
     DEFAULT_MODEL: "claude-sonnet-4-20250514",
     MAX_AGENT_ITERATIONS: 5,
