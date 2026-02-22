@@ -1448,7 +1448,7 @@ function createEnsembleTaskExecutor(deps) {
 ${result.final_response || result.error || "[no output]"}`).join("\n\n");
       const synthResult = await deps.delegateTask(
         synthesisAgentId,
-        "\uFFFD\u01B7\uFFFD \uFFFD\uFFFD\uFFFD\uFFFD \uFFFD\uFFFD\uFFFD\uFFFD\uFFFD\uFFFD\u01AE\uFFFD\uFFFD \uFFFD\uFFFD\uFFFD\uFFFD\uFFFD\uFFFD \uFFFD\uFFFD\uFFFD\uFFFD\uFFFD\u03FF\uFFFD \uFFFD\u03F3\uFFFD\uFFFD\uFFFD \uFFFD\uFFFD\uFFFD\u0575\uFFFD \uFFFD\u4EAF\uFFFD\uFFFD \uFFFD\u06FC\uFFFD\uFFFD\u03FC\uFFFD\uFFFD\uFFFD.",
+        "Synthesize the following results from multiple agents into one unified answer.",
         synthContext
       );
       synthesis = synthResult.final_response;
@@ -1532,12 +1532,12 @@ function createPipelineTaskExecutor(deps) {
 // src/tools/delegate-task.ts
 import { z as z4 } from "zod";
 var schema = z4.object({
-  agent_id: z4.string().describe("\uC791\uC5C5\uC744 \uC704\uC784\uD560 \uC5D0\uC774\uC804\uD2B8 ID"),
-  task: z4.string().describe("\uC5D0\uC774\uC804\uD2B8\uC5D0\uAC8C \uC804\uB2EC\uD560 \uC791\uC5C5 \uC9C0\uC2DC\uBB38"),
-  context: z4.string().optional().describe("\uCD94\uAC00 \uCEE8\uD14D\uC2A4\uD2B8")
+  agent_id: z4.string().describe("Agent ID to delegate the task to"),
+  task: z4.string().describe("Task instruction to send to the agent"),
+  context: z4.string().optional().describe("Additional context")
 });
 function registerDelegateTaskTool(server, deps) {
-  const description = `\uD2B9\uC815 \uC11C\uBE0C \uC5D0\uC774\uC804\uD2B8\uC5D0\uAC8C \uB2E8\uC77C \uC791\uC5C5\uC744 \uC704\uC784\uD569\uB2C8\uB2E4. \uC0AC\uC6A9 \uAC00\uB2A5\uD55C \uC5D0\uC774\uC804\uD2B8: ${deps.availableAgentIds.join(", ")}`;
+  const description = `Delegates a single task to a specific sub-agent. Available agents: ${deps.availableAgentIds.join(", ")}`;
   server.tool("delegate_task", description, schema.shape, async (args) => {
     const result = await deps.delegateTask(args.agent_id, args.task, args.context);
     const payload = {
@@ -1567,13 +1567,13 @@ function registerDelegateTaskTool(server, deps) {
 // src/tools/ensemble-task.ts
 import { z as z5 } from "zod";
 var schema2 = z5.object({
-  agent_ids: z5.array(z5.string()).min(2).max(5).describe("\uB3D9\uC77C \uC791\uC5C5\uC744 \uC218\uD589\uD560 \uC5D0\uC774\uC804\uD2B8 ID \uBAA9\uB85D"),
-  task: z5.string().describe("\uB3D9\uC2DC\uC5D0 \uC218\uD589\uD560 \uC791\uC5C5"),
-  synthesize: z5.boolean().default(true).describe("\uACB0\uACFC \uD1B5\uD569 \uC5EC\uBD80"),
-  synthesizer_agent_id: z5.string().optional().describe("\uACB0\uACFC \uD1B5\uD569 \uC218\uD589 \uC5D0\uC774\uC804\uD2B8")
+  agent_ids: z5.array(z5.string()).min(2).max(5).describe("List of agent IDs to run the same task"),
+  task: z5.string().describe("Task to run in parallel"),
+  synthesize: z5.boolean().default(true).describe("Whether to synthesize the results"),
+  synthesizer_agent_id: z5.string().optional().describe("Agent ID used for result synthesis")
 });
 function registerEnsembleTaskTool(server, deps) {
-  const description = `\uC5EC\uB7EC \uC11C\uBE0C \uC5D0\uC774\uC804\uD2B8\uC5D0\uAC8C \uB3D9\uC77C \uC791\uC5C5\uC744 \uBCD1\uB82C\uB85C \uC218\uD589\uC2DC\uD0A4\uACE0 \uACB0\uACFC\uB97C \uD1B5\uD569\uD569\uB2C8\uB2E4. \uC0AC\uC6A9 \uAC00\uB2A5\uD55C \uC5D0\uC774\uC804\uD2B8: ${deps.availableAgentIds.join(", ")}`;
+  const description = `Runs the same task in parallel across multiple sub-agents and synthesizes the outputs. Available agents: ${deps.availableAgentIds.join(", ")}`;
   server.tool("ensemble_task", description, schema2.shape, async (args) => {
     const result = await deps.ensembleTask({
       agentIds: args.agent_ids,
@@ -1616,13 +1616,13 @@ import { z as z6 } from "zod";
 var schema3 = z6.object({
   steps: z6.array(
     z6.object({
-      agent_id: z6.string().describe("\uB2E8\uACC4\uB97C \uC218\uD589\uD560 \uC5D0\uC774\uC804\uD2B8 ID"),
-      task: z6.string().describe("\uB2E8\uACC4\uC5D0\uC11C \uC218\uD589\uD560 \uC791\uC5C5")
+      agent_id: z6.string().describe("Agent ID that executes this step"),
+      task: z6.string().describe("Task to execute in this step")
     })
-  ).min(2).max(10).describe("\uC21C\uCC28 \uD30C\uC774\uD504\uB77C\uC778 \uB2E8\uACC4")
+  ).min(2).max(10).describe("Sequential pipeline steps")
 });
 function registerPipelineTaskTool(server, deps) {
-  const description = `\uC5EC\uB7EC \uC5D0\uC774\uC804\uD2B8\uB97C \uC21C\uCC28 \uC2E4\uD589\uD558\uB294 \uD30C\uC774\uD504\uB77C\uC778\uC785\uB2C8\uB2E4. \uC774\uC804 \uB2E8\uACC4 \uCD9C\uB825\uC774 \uB2E4\uC74C \uB2E8\uACC4 \uCEE8\uD14D\uC2A4\uD2B8\uB85C \uC804\uB2EC\uB429\uB2C8\uB2E4. \uC0AC\uC6A9 \uAC00\uB2A5\uD55C \uC5D0\uC774\uC804\uD2B8: ${deps.availableAgentIds.join(", ")}`;
+  const description = `Runs a multi-agent pipeline sequentially. Each step output is passed as context to the next step. Available agents: ${deps.availableAgentIds.join(", ")}`;
   server.tool("pipeline_task", description, schema3.shape, async (args) => {
     const result = await deps.pipelineTask(args.steps);
     const payload = {
@@ -1659,7 +1659,7 @@ function registerPipelineTaskTool(server, deps) {
 import { z as z7 } from "zod";
 var schema4 = z7.object({});
 function registerListAgentsTool(server, deps) {
-  const description = "\uC0AC\uC6A9 \uAC00\uB2A5\uD55C \uC11C\uBE0C \uC5D0\uC774\uC804\uD2B8 \uBAA9\uB85D\uACFC \uC5ED\uD560/\uBAA8\uB378/\uC811\uADFC \uAC00\uB2A5\uD55C \uB3C4\uAD6C\uB97C \uC870\uD68C\uD569\uB2C8\uB2E4.";
+  const description = "Returns available sub-agents with role, model, and accessible tools.";
   server.tool("list_agents", description, schema4.shape, async () => {
     const agents = {};
     const serverHealth = deps.mcpManager.getAllServerHealth();

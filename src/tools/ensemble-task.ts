@@ -1,4 +1,4 @@
-﻿import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { EnsembleResult } from "../orchestrator/ensemble.js";
 
@@ -17,16 +17,16 @@ interface RegisterEnsembleTaskToolDeps {
 }
 
 const schema = z.object({
-  agent_ids: z.array(z.string()).min(2).max(5).describe("동일 작업을 수행할 에이전트 ID 목록"),
-  task: z.string().describe("동시에 수행할 작업"),
-  synthesize: z.boolean().default(true).describe("결과 통합 여부"),
-  synthesizer_agent_id: z.string().optional().describe("결과 통합 수행 에이전트"),
+  agent_ids: z.array(z.string()).min(2).max(5).describe("List of agent IDs to run the same task"),
+  task: z.string().describe("Task to run in parallel"),
+  synthesize: z.boolean().default(true).describe("Whether to synthesize the results"),
+  synthesizer_agent_id: z.string().optional().describe("Agent ID used for result synthesis"),
 });
 
 export function registerEnsembleTaskTool(server: McpServer, deps: RegisterEnsembleTaskToolDeps): void {
   const description =
-    "여러 서브 에이전트에게 동일 작업을 병렬로 수행시키고 결과를 통합합니다. " +
-    `사용 가능한 에이전트: ${deps.availableAgentIds.join(", ")}`;
+    "Runs the same task in parallel across multiple sub-agents and synthesizes the outputs. " +
+    `Available agents: ${deps.availableAgentIds.join(", ")}`;
 
   server.tool("ensemble_task", description, schema.shape, async (args) => {
     const result = await deps.ensembleTask({

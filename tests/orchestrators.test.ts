@@ -1,4 +1,4 @@
-﻿import assert from "node:assert/strict";
+import assert from "node:assert/strict";
 import test from "node:test";
 import type { AgentRunResult } from "../src/agent/runtime.js";
 import { createEnsembleTaskExecutor } from "../src/orchestrator/ensemble.js";

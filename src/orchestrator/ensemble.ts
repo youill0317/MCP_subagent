@@ -42,7 +42,7 @@ export function createEnsembleTaskExecutor(deps: EnsembleTaskDeps) {
 
       const synthResult = await deps.delegateTask(
         synthesisAgentId,
-        "아래 여러 에이전트의 결과를 종합하여 하나의 통합된 답변을 작성하세요.",
+        "Synthesize the following results from multiple agents into one unified answer.",
         synthContext,
       );
 

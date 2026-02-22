@@ -1,4 +1,4 @@
-﻿import assert from "node:assert/strict";
+import assert from "node:assert/strict";
 import test from "node:test";
 import { createServer } from "../src/server.js";
 import type { AgentsConfig } from "../src/config/agents.js";

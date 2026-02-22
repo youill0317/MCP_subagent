@@ -1,4 +1,4 @@
-﻿import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { PipelineResult, PipelineStep } from "../orchestrator/pipeline.js";
 
@@ -15,19 +15,19 @@ const schema = z.object({
   steps: z
     .array(
       z.object({
-        agent_id: z.string().describe("단계를 수행할 에이전트 ID"),
-        task: z.string().describe("단계에서 수행할 작업"),
+        agent_id: z.string().describe("Agent ID that executes this step"),
+        task: z.string().describe("Task to execute in this step"),
       }),
     )
     .min(2)
     .max(10)
-    .describe("순차 파이프라인 단계"),
+    .describe("Sequential pipeline steps"),
 });
 
 export function registerPipelineTaskTool(server: McpServer, deps: RegisterPipelineTaskToolDeps): void {
   const description =
-    "여러 에이전트를 순차 실행하는 파이프라인입니다. 이전 단계 출력이 다음 단계 컨텍스트로 전달됩니다. " +
-    `사용 가능한 에이전트: ${deps.availableAgentIds.join(", ")}`;
+    "Runs a multi-agent pipeline sequentially. Each step output is passed as context to the next step. " +
+    `Available agents: ${deps.availableAgentIds.join(", ")}`;
 
   server.tool("pipeline_task", description, schema.shape, async (args) => {
     const result = await deps.pipelineTask(args.steps);

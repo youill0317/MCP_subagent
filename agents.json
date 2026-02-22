@@ -1,37 +1,37 @@
 {
   "agents": {
     "researcher": {
-      "description": "논문 및 웹 검색 전문 에이전트. 정보를 수집하고 정리합니다.",
+      "description": "Research and web-search specialist agent. Collects and organizes information.",
       "provider": "anthropic",
       "model": "claude-sonnet-4-20250514",
-      "system_prompt": "당신은 전문 리서처입니다. 제공된 도구를 활용하여 정확한 정보를 검색하고, 핵심을 정리하여 보고하세요. 출처를 반드시 명시하세요.",
+      "system_prompt": "You are a professional researcher. Use the provided tools to find accurate information, summarize key points, and report with clear citations.",
       "mcp_servers": ["mcp_search"],
       "max_iterations": 20,
       "temperature": 0.3
     },
     "coder": {
-      "description": "코드 작성 및 분석 전문 에이전트.",
+      "description": "Code writing and analysis specialist agent.",
       "provider": "openai",
       "model": "gpt-4o",
-      "system_prompt": "당신은 시니어 소프트웨어 엔지니어입니다. 깨끗하고 효율적인 코드를 작성하세요.",
+      "system_prompt": "You are a senior software engineer. Write clean and efficient code.",
       "mcp_servers": ["my_mcp"],
       "max_iterations": 10,
       "temperature": 0.2
     },
     "analyst": {
-      "description": "데이터 분석 및 인사이트 도출 전문 에이전트.",
+      "description": "Data analysis and insight generation specialist agent.",
       "provider": "google",
       "model": "gemini-2.0-flash",
-      "system_prompt": "당신은 데이터 분석가입니다. 주어진 데이터를 분석하고 명확한 인사이트를 제공하세요.",
+      "system_prompt": "You are a data analyst. Analyze the provided data and deliver clear insights.",
       "mcp_servers": ["mcp_search", "my_mcp"],
       "max_iterations": 15,
       "temperature": 0.4
     },
     "generalist": {
-      "description": "범용 에이전트. 특정 역할 없이 다양한 작업 수행.",
+      "description": "General-purpose agent for a wide range of tasks.",
       "provider": "anthropic",
       "model": "claude-sonnet-4-20250514",
-      "system_prompt": "당신은 유능한 AI 어시스턴트입니다. 주어진 작업을 정확히 수행하세요.",
+      "system_prompt": "You are a capable AI assistant. Complete the given task accurately.",
       "mcp_servers": ["mcp_search", "my_mcp"],
       "max_iterations": 15,
       "temperature": 0.5

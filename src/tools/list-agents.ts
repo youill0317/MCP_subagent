@@ -1,4 +1,4 @@
-﻿import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { AgentsConfig } from "../config/agents.js";
 import { MCPClientManager } from "../mcp-client/manager.js";
@@ -11,7 +11,7 @@ interface RegisterListAgentsToolDeps {
 const schema = z.object({});
 
 export function registerListAgentsTool(server: McpServer, deps: RegisterListAgentsToolDeps): void {
-  const description = "사용 가능한 서브 에이전트 목록과 역할/모델/접근 가능한 도구를 조회합니다.";
+  const description = "Returns available sub-agents with role, model, and accessible tools.";
 
   server.tool("list_agents", description, schema.shape, async () => {
     const agents: Record<string, unknown> = {};

@@ -1,4 +1,4 @@
-﻿import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { DelegateTaskFn } from "../orchestrator/delegate.js";
 
@@ -8,15 +8,15 @@ interface RegisterDelegateTaskToolDeps {
 }
 
 const schema = z.object({
-  agent_id: z.string().describe("작업을 위임할 에이전트 ID"),
-  task: z.string().describe("에이전트에게 전달할 작업 지시문"),
-  context: z.string().optional().describe("추가 컨텍스트"),
+  agent_id: z.string().describe("Agent ID to delegate the task to"),
+  task: z.string().describe("Task instruction to send to the agent"),
+  context: z.string().optional().describe("Additional context"),
 });
 
 export function registerDelegateTaskTool(server: McpServer, deps: RegisterDelegateTaskToolDeps): void {
   const description =
-    "특정 서브 에이전트에게 단일 작업을 위임합니다. " +
-    `사용 가능한 에이전트: ${deps.availableAgentIds.join(", ")}`;
+    "Delegates a single task to a specific sub-agent. " +
+    `Available agents: ${deps.availableAgentIds.join(", ")}`;
 
   server.tool("delegate_task", description, schema.shape, async (args) => {
     const result = await deps.delegateTask(args.agent_id, args.task, args.context);
