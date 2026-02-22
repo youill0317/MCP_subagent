@@ -1,0 +1,21 @@
+{
+  "servers": {
+    "mcp_search": {
+      "command": "node",
+      "args": ["C:/Users/user/Documents/Projects_src/MCP_search/dist/index.js"],
+      "env": {
+        "BRAVE_API_KEY": "${BRAVE_API_KEY}",
+        "TAVILY_API_KEY": "${TAVILY_API_KEY}"
+      },
+      "description": "웹 검색, 논문 검색, 뉴스 검색 도구 제공"
+    },
+    "my_mcp": {
+      "command": "node",
+      "args": ["C:/Users/user/Documents/Projects_src/My_mcp/dist/index.js"],
+      "env": {
+        "MARKDOWN_BASE_DIR": "C:/Users/user/Documents/Obsidian"
+      },
+      "description": "Obsidian 마크다운 파일 탐색 및 읽기 도구 제공"
+    }
+  }
+}
