@@ -9,7 +9,7 @@
       },
       "description": "Provides web search, paper search, and news search tools"
     },
-    "my_mcp": {
+    "mcp_obsidian": {
       "command": "node",
       "args": ["C:/Users/user/Documents/Projects_src/My_mcp/dist/index.js"],
       "env": {

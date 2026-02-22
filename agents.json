@@ -2,39 +2,64 @@
   "agents": {
     "researcher": {
       "description": "Research and web-search specialist agent. Collects and organizes information.",
-      "provider": "anthropic",
-      "model": "claude-sonnet-4-20250514",
+      "provider": "custom",
+      "model": "zai-org/glm-5",
       "system_prompt": "You are a professional researcher. Use the provided tools to find accurate information, summarize key points, and report with clear citations.",
-      "mcp_servers": ["mcp_search"],
+      "mcp_servers": [
+        "mcp_search"
+      ],
       "max_iterations": 20,
       "temperature": 0.3
     },
-    "coder": {
-      "description": "Code writing and analysis specialist agent.",
-      "provider": "openai",
-      "model": "gpt-4o",
-      "system_prompt": "You are a senior software engineer. Write clean and efficient code.",
-      "mcp_servers": ["my_mcp"],
-      "max_iterations": 10,
-      "temperature": 0.2
-    },
     "analyst": {
       "description": "Data analysis and insight generation specialist agent.",
-      "provider": "google",
-      "model": "gemini-2.0-flash",
+      "provider": "custom",
+      "model": "zai-org/glm-5",
       "system_prompt": "You are a data analyst. Analyze the provided data and deliver clear insights.",
-      "mcp_servers": ["mcp_search", "my_mcp"],
+      "mcp_servers": [
+        "mcp_obsidian"
+      ],
       "max_iterations": 15,
       "temperature": 0.4
     },
-    "generalist": {
-      "description": "General-purpose agent for a wide range of tasks.",
-      "provider": "anthropic",
-      "model": "claude-sonnet-4-20250514",
-      "system_prompt": "You are a capable AI assistant. Complete the given task accurately.",
-      "mcp_servers": ["mcp_search", "my_mcp"],
+    "reviewer": {
+      "description": "Fact-checking and hallucination detection specialist. Verifies accuracy of generated content.",
+      "provider": "custom",
+      "model": "zai-org/glm-5",
+      "system_prompt": "You are a rigorous fact-checker and reviewer. Critically examine the given text for factual errors, hallucinations, logical inconsistencies, and unsupported claims. Use the provided tools to verify facts against reliable sources. Clearly flag any issues found with specific corrections and evidence.",
+      "mcp_servers": [
+        "mcp_search",
+        "mcp_obsidian"
+      ],
       "max_iterations": 15,
-      "temperature": 0.5
+      "temperature": 0.2
+    },
+    "creative": {
+      "description": "Creative thinker. Generates novel ideas, analogies, and unconventional perspectives.",
+      "provider": "custom",
+      "model": "zai-org/glm-5",
+      "system_prompt": "You are a creative thinker in a group discussion. Generate original ideas, fresh analogies, and unconventional perspectives. Build on others' ideas. Challenge conventional wisdom. Think outside the box.",
+      "mcp_servers": [],
+      "max_iterations": 5,
+      "temperature": 0.8
+    },
+    "critical": {
+      "description": "Critical analyst. Identifies flaws, risks, and counterarguments.",
+      "provider": "custom",
+      "model": "zai-org/glm-5",
+      "system_prompt": "You are a critical analyst in a group discussion. Identify logical flaws, potential risks, unsupported assumptions, and counterarguments. Be constructive but rigorous. Point out what could go wrong.",
+      "mcp_servers": [],
+      "max_iterations": 5,
+      "temperature": 0.3
+    },
+    "logical": {
+      "description": "Logical synthesizer. Structures arguments and builds frameworks.",
+      "provider": "custom",
+      "model": "zai-org/glm-5",
+      "system_prompt": "You are a logical synthesizer in a group discussion. Structure arguments clearly, identify common ground, resolve contradictions, and build coherent frameworks from the discussion. Focus on evidence-based reasoning.",
+      "mcp_servers": [],
+      "max_iterations": 5,
+      "temperature": 0.4
     }
   }
 }

@@ -1430,10 +1430,103 @@ async function withTimeout(promise, timeoutMs, onTimeout, message) {
   }
 }
 
+// src/orchestrator/debate.ts
+function createDebateTaskExecutor(deps) {
+  return async function debateTask(input) {
+    validateInput(input);
+    const totalTokens = { input: 0, output: 0 };
+    const debateRounds = [];
+    const errors = [];
+    const moderatorAgentId = input.moderatorAgentId ?? "logical";
+    const maxParallelAgents = Math.max(1, deps.maxParallelAgents);
+    let discussionLog = "";
+    for (let roundNumber = 1; roundNumber <= input.rounds; roundNumber += 1) {
+      const context = roundNumber === 1 ? void 0 : discussionLog;
+      const taskPrompt = roundNumber === 1 ? input.task : [
+        "Continue the discussion. Respond to other participants' points with rebuttals, refinements, or support.",
+        `Topic: ${input.task}`
+      ].join("\n\n");
+      const responses = await mapWithConcurrency(
+        input.agentIds,
+        maxParallelAgents,
+        async (agentId) => {
+          const result = await deps.delegateTask(agentId, taskPrompt, context);
+          totalTokens.input += result.total_tokens.input;
+          totalTokens.output += result.total_tokens.output;
+          if (result.error) {
+            errors.push(`Round ${roundNumber} (${agentId}): ${result.error}`);
+          }
+          return {
+            agent_id: agentId,
+            result
+          };
+        }
+      );
+      debateRounds.push({
+        round: roundNumber,
+        responses
+      });
+      discussionLog += `${formatRound(roundNumber, responses)}
+
+`;
+    }
+    const moderatorResult = await deps.delegateTask(
+      moderatorAgentId,
+      "Synthesize the entire discussion into a clear, actionable conclusion. Include major agreements, disagreements, risks, and recommended next steps.",
+      discussionLog || void 0
+    );
+    totalTokens.input += moderatorResult.total_tokens.input;
+    totalTokens.output += moderatorResult.total_tokens.output;
+    if (moderatorResult.error) {
+      errors.push(`Moderator (${moderatorAgentId}): ${moderatorResult.error}`);
+    }
+    return {
+      rounds: debateRounds,
+      conclusion: moderatorResult.final_response,
+      moderator_agent_id: moderatorAgentId,
+      total_rounds: input.rounds,
+      total_tokens: totalTokens,
+      ...errors.length > 0 ? { error: errors.join(" | ") } : {}
+    };
+  };
+}
+function validateInput(input) {
+  if (input.agentIds.length < 2 || input.agentIds.length > 5) {
+    throw new Error("agentIds must include between 2 and 5 agents");
+  }
+  if (!Number.isInteger(input.rounds) || input.rounds < 1 || input.rounds > 5) {
+    throw new Error("rounds must be an integer between 1 and 5");
+  }
+}
+function formatRound(roundNumber, responses) {
+  const sections = [`## Round ${roundNumber}`];
+  for (const item of responses) {
+    sections.push(`### ${item.agent_id}`);
+    sections.push(item.result.final_response || item.result.error || "[no output]");
+  }
+  return sections.join("\n");
+}
+async function mapWithConcurrency(items, concurrency, worker) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (true) {
+      const current = nextIndex;
+      nextIndex += 1;
+      if (current >= items.length) {
+        return;
+      }
+      results[current] = await worker(items[current], current);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
 // src/orchestrator/ensemble.ts
 function createEnsembleTaskExecutor(deps) {
   return async function ensembleTask(input) {
-    const individualResults = await mapWithConcurrency(
+    const individualResults = await mapWithConcurrency2(
       input.agentIds,
       Math.max(1, deps.maxParallelAgents),
       async (agentId) => deps.delegateTask(agentId, input.task)
@@ -1470,7 +1563,7 @@ ${result.final_response || result.error || "[no output]"}`).join("\n\n");
     };
   };
 }
-async function mapWithConcurrency(items, concurrency, worker) {
+async function mapWithConcurrency2(items, concurrency, worker) {
   const results = new Array(items.length);
   let nextIndex = 0;
   const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
@@ -1529,16 +1622,67 @@ function createPipelineTaskExecutor(deps) {
   };
 }
 
-// src/tools/delegate-task.ts
+// src/tools/debate-task.ts
 import { z as z4 } from "zod";
 var schema = z4.object({
-  agent_id: z4.string().describe("Agent ID to delegate the task to"),
-  task: z4.string().describe("Task instruction to send to the agent"),
-  context: z4.string().optional().describe("Additional context")
+  agent_ids: z4.array(z4.string()).min(2).max(5).describe("Agent IDs participating in the debate"),
+  task: z4.string().describe("Discussion topic or question"),
+  rounds: z4.number().int().min(1).max(5).default(3).describe("Number of discussion rounds"),
+  moderator_agent_id: z4.string().optional().describe("Agent ID for final synthesis")
+});
+function registerDebateTaskTool(server, deps) {
+  const description = `Runs a multi-round debate among sub-agents and produces a moderated conclusion. Available agents: ${deps.availableAgentIds.join(", ")}`;
+  server.tool("debate_task", description, schema.shape, async (args) => {
+    const result = await deps.debateTask({
+      agentIds: args.agent_ids,
+      task: args.task,
+      rounds: args.rounds,
+      moderatorAgentId: args.moderator_agent_id
+    });
+    const payload = {
+      status: result.error ? "partial_success" : "success",
+      conclusion: result.conclusion,
+      moderator_agent_id: result.moderator_agent_id,
+      total_rounds: result.total_rounds,
+      rounds: result.rounds.map((round) => ({
+        round: round.round,
+        responses: round.responses.map((item) => ({
+          agent_id: item.agent_id,
+          response: item.result.final_response,
+          metadata: {
+            run_id: item.result.run_id,
+            duration_ms: item.result.duration_ms,
+            stop_reason: item.result.stop_reason,
+            retries: item.result.retries ?? 0,
+            iterations: item.result.iterations,
+            tool_calls_made: item.result.tool_calls_made,
+            tokens: {
+              input: item.result.total_tokens.input,
+              output: item.result.total_tokens.output
+            }
+          },
+          ...item.result.error ? { error: item.result.error } : {}
+        }))
+      })),
+      total_tokens: result.total_tokens,
+      ...result.error ? { error: result.error } : {}
+    };
+    return {
+      content: [{ type: "text", text: JSON.stringify(payload, null, 2) }]
+    };
+  });
+}
+
+// src/tools/delegate-task.ts
+import { z as z5 } from "zod";
+var schema2 = z5.object({
+  agent_id: z5.string().describe("Agent ID to delegate the task to"),
+  task: z5.string().describe("Task instruction to send to the agent"),
+  context: z5.string().optional().describe("Additional context")
 });
 function registerDelegateTaskTool(server, deps) {
   const description = `Delegates a single task to a specific sub-agent. Available agents: ${deps.availableAgentIds.join(", ")}`;
-  server.tool("delegate_task", description, schema.shape, async (args) => {
+  server.tool("delegate_task", description, schema2.shape, async (args) => {
     const result = await deps.delegateTask(args.agent_id, args.task, args.context);
     const payload = {
       status: result.error ? "error" : "success",
@@ -1565,16 +1709,16 @@ function registerDelegateTaskTool(server, deps) {
 }
 
 // src/tools/ensemble-task.ts
-import { z as z5 } from "zod";
-var schema2 = z5.object({
-  agent_ids: z5.array(z5.string()).min(2).max(5).describe("List of agent IDs to run the same task"),
-  task: z5.string().describe("Task to run in parallel"),
-  synthesize: z5.boolean().default(true).describe("Whether to synthesize the results"),
-  synthesizer_agent_id: z5.string().optional().describe("Agent ID used for result synthesis")
+import { z as z6 } from "zod";
+var schema3 = z6.object({
+  agent_ids: z6.array(z6.string()).min(2).max(5).describe("List of agent IDs to run the same task"),
+  task: z6.string().describe("Task to run in parallel"),
+  synthesize: z6.boolean().default(true).describe("Whether to synthesize the results"),
+  synthesizer_agent_id: z6.string().optional().describe("Agent ID used for result synthesis")
 });
 function registerEnsembleTaskTool(server, deps) {
   const description = `Runs the same task in parallel across multiple sub-agents and synthesizes the outputs. Available agents: ${deps.availableAgentIds.join(", ")}`;
-  server.tool("ensemble_task", description, schema2.shape, async (args) => {
+  server.tool("ensemble_task", description, schema3.shape, async (args) => {
     const result = await deps.ensembleTask({
       agentIds: args.agent_ids,
       task: args.task,
@@ -1612,18 +1756,18 @@ function registerEnsembleTaskTool(server, deps) {
 }
 
 // src/tools/pipeline-task.ts
-import { z as z6 } from "zod";
-var schema3 = z6.object({
-  steps: z6.array(
-    z6.object({
-      agent_id: z6.string().describe("Agent ID that executes this step"),
-      task: z6.string().describe("Task to execute in this step")
+import { z as z7 } from "zod";
+var schema4 = z7.object({
+  steps: z7.array(
+    z7.object({
+      agent_id: z7.string().describe("Agent ID that executes this step"),
+      task: z7.string().describe("Task to execute in this step")
     })
   ).min(2).max(10).describe("Sequential pipeline steps")
 });
 function registerPipelineTaskTool(server, deps) {
   const description = `Runs a multi-agent pipeline sequentially. Each step output is passed as context to the next step. Available agents: ${deps.availableAgentIds.join(", ")}`;
-  server.tool("pipeline_task", description, schema3.shape, async (args) => {
+  server.tool("pipeline_task", description, schema4.shape, async (args) => {
     const result = await deps.pipelineTask(args.steps);
     const payload = {
       status: result.error ? "error" : "success",
@@ -1656,11 +1800,11 @@ function registerPipelineTaskTool(server, deps) {
 }
 
 // src/tools/list-agents.ts
-import { z as z7 } from "zod";
-var schema4 = z7.object({});
+import { z as z8 } from "zod";
+var schema5 = z8.object({});
 function registerListAgentsTool(server, deps) {
   const description = "Returns available sub-agents with role, model, and accessible tools.";
-  server.tool("list_agents", description, schema4.shape, async () => {
+  server.tool("list_agents", description, schema5.shape, async () => {
     const agents = {};
     const serverHealth = deps.mcpManager.getAllServerHealth();
     for (const [agentId, agent] of Object.entries(deps.agentsConfig.agents)) {
@@ -1707,6 +1851,10 @@ function createServer(deps) {
   const pipelineTask = createPipelineTaskExecutor({
     delegateTask
   });
+  const debateTask = createDebateTaskExecutor({
+    delegateTask,
+    maxParallelAgents: deps.env.MAX_PARALLEL_AGENTS
+  });
   const availableAgentIds = Object.keys(deps.agentsConfig.agents);
   registerDelegateTaskTool(server, {
     delegateTask,
@@ -1718,6 +1866,10 @@ function createServer(deps) {
   });
   registerPipelineTaskTool(server, {
     pipelineTask,
+    availableAgentIds
+  });
+  registerDebateTaskTool(server, {
+    debateTask,
     availableAgentIds
   });
   registerListAgentsTool(server, {

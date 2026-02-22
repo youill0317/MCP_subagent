@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AgentRunResult } from "../src/agent/runtime.js";
+import { createDebateTaskExecutor } from "../src/orchestrator/debate.js";
 import { createEnsembleTaskExecutor } from "../src/orchestrator/ensemble.js";
 import { createPipelineTaskExecutor } from "../src/orchestrator/pipeline.js";
 
@@ -57,6 +58,119 @@ test("ensemble aggregates results and synthesis tokens", async () => {
   assert.equal(result.total_tokens.input, 11);
   assert.equal(result.total_tokens.output, 5);
   assert.equal(calls.length, 3);
+});
+
+test("debate runs multiple rounds with shared context and moderator synthesis", async () => {
+  const calls: Array<{ agentId: string; task: string; context?: string }> = [];
+  const perAgentRound: Record<string, number> = {};
+
+  const delegateTask = async (agentId: string, task: string, context?: string): Promise<AgentRunResult> => {
+    calls.push({ agentId, task, context });
+
+    if (task.startsWith("Synthesize the entire discussion")) {
+      return makeResult({
+        agent_id: agentId,
+        final_response: "final conclusion",
+        total_tokens: { input: 2, output: 1 },
+      });
+    }
+
+    perAgentRound[agentId] = (perAgentRound[agentId] ?? 0) + 1;
+
+    return makeResult({
+      agent_id: agentId,
+      final_response: `${agentId}-r${perAgentRound[agentId]}`,
+      total_tokens: { input: 1, output: 1 },
+    });
+  };
+
+  const debateTask = createDebateTaskExecutor({
+    delegateTask,
+    maxParallelAgents: 2,
+  });
+
+  const result = await debateTask({
+    agentIds: ["creative", "critical"],
+    task: "Debate the best launch strategy",
+    rounds: 3,
+  });
+
+  assert.equal(result.rounds.length, 3);
+  assert.equal(result.total_rounds, 3);
+  assert.equal(result.moderator_agent_id, "logical");
+  assert.equal(result.conclusion, "final conclusion");
+  assert.equal(result.total_tokens.input, 8);
+  assert.equal(result.total_tokens.output, 7);
+  assert.equal(calls.length, 7);
+
+  const participantCalls = calls.filter((call) => call.agentId !== "logical");
+  assert.equal(participantCalls.length, 6);
+  assert.equal(participantCalls.filter((call) => call.context === undefined).length, 2);
+  assert.equal(
+    participantCalls.filter(
+      (call) => (call.context?.includes("## Round 1") ?? false) && !(call.context?.includes("## Round 2") ?? false),
+    ).length,
+    2,
+  );
+  assert.equal(
+    participantCalls.filter((call) => call.context?.includes("## Round 2") ?? false).length,
+    2,
+  );
+
+  const moderatorCall = calls.find((call) => call.agentId === "logical");
+  assert.ok(moderatorCall);
+  assert.match(moderatorCall?.context ?? "", /## Round 3/);
+});
+
+test("debate continues on participant failure and returns partial error summary", async () => {
+  const calls: Array<{ agentId: string; task: string; context?: string }> = [];
+  const perAgentRound: Record<string, number> = {};
+
+  const delegateTask = async (agentId: string, task: string, context?: string): Promise<AgentRunResult> => {
+    calls.push({ agentId, task, context });
+
+    if (task.startsWith("Synthesize the entire discussion")) {
+      return makeResult({
+        agent_id: agentId,
+        final_response: "synthesized despite errors",
+        total_tokens: { input: 1, output: 1 },
+      });
+    }
+
+    perAgentRound[agentId] = (perAgentRound[agentId] ?? 0) + 1;
+
+    if (agentId === "critical" && perAgentRound[agentId] === 2) {
+      return makeResult({
+        agent_id: agentId,
+        final_response: "",
+        total_tokens: { input: 1, output: 0 },
+        error: "failed in round 2",
+      });
+    }
+
+    return makeResult({
+      agent_id: agentId,
+      final_response: `${agentId}-r${perAgentRound[agentId]}`,
+      total_tokens: { input: 1, output: 1 },
+    });
+  };
+
+  const debateTask = createDebateTaskExecutor({
+    delegateTask,
+    maxParallelAgents: 2,
+  });
+
+  const result = await debateTask({
+    agentIds: ["creative", "critical"],
+    task: "Debate risk controls",
+    rounds: 3,
+  });
+
+  assert.equal(calls.length, 7);
+  assert.equal(result.conclusion, "synthesized despite errors");
+  assert.match(result.error ?? "", /Round 2 \(critical\): failed in round 2/);
+  assert.ok(result.rounds[1]?.responses.find((item) => item.agent_id === "critical")?.result.error);
+  assert.ok(calls.some((call) => call.agentId === "logical"));
 });
 
 test("pipeline passes previous output as context and stops on error", async () => {

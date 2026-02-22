@@ -3,8 +3,10 @@ import type { AgentsConfig } from "./config/agents.js";
 import type { AppEnv } from "./config/env.js";
 import { MCPClientManager } from "./mcp-client/manager.js";
 import { createDelegateTaskExecutor } from "./orchestrator/delegate.js";
+import { createDebateTaskExecutor } from "./orchestrator/debate.js";
 import { createEnsembleTaskExecutor } from "./orchestrator/ensemble.js";
 import { createPipelineTaskExecutor } from "./orchestrator/pipeline.js";
+import { registerDebateTaskTool } from "./tools/debate-task.js";
 import { registerDelegateTaskTool } from "./tools/delegate-task.js";
 import { registerEnsembleTaskTool } from "./tools/ensemble-task.js";
 import { registerPipelineTaskTool } from "./tools/pipeline-task.js";
@@ -37,6 +39,11 @@ export function createServer(deps: CreateServerDeps): McpServer {
     delegateTask,
   });
 
+  const debateTask = createDebateTaskExecutor({
+    delegateTask,
+    maxParallelAgents: deps.env.MAX_PARALLEL_AGENTS,
+  });
+
   const availableAgentIds = Object.keys(deps.agentsConfig.agents);
 
   registerDelegateTaskTool(server, {
@@ -51,6 +58,11 @@ export function createServer(deps: CreateServerDeps): McpServer {
 
   registerPipelineTaskTool(server, {
     pipelineTask,
+    availableAgentIds,
+  });
+
+  registerDebateTaskTool(server, {
+    debateTask,
     availableAgentIds,
   });
 
