@@ -10,6 +10,7 @@ test("createServer smoke test", () => {
     OPENAI_BASE_URL: "https://api.openai.com/v1",
     ANTHROPIC_BASE_URL: "https://api.anthropic.com/v1",
     GOOGLE_BASE_URL: "https://generativelanguage.googleapis.com/v1beta",
+    CUSTOM_BASE_URL: "https://api.openai.com/v1",
     DEFAULT_PROVIDER: "anthropic",
     DEFAULT_MODEL: "claude-sonnet-4-20250514",
     MAX_AGENT_ITERATIONS: 5,
@@ -22,6 +23,7 @@ test("createServer smoke test", () => {
       openai: "x",
       anthropic: "y",
       google: "z",
+      custom: "c",
     },
     enabledProviders: ["openai", "anthropic", "google"],
   };

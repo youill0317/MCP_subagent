@@ -57,11 +57,14 @@ export function createDelegateTaskExecutor(deps: DelegateTaskDeps): DelegateTask
   };
 }
 
-function createProviderRateLimiters(env: AppEnv): Record<"openai" | "anthropic" | "google", TokenBucketRateLimiter> {
+function createProviderRateLimiters(
+  env: AppEnv,
+): Record<"openai" | "anthropic" | "google" | "custom", TokenBucketRateLimiter> {
   return {
     openai: new TokenBucketRateLimiter(env.RATE_LIMIT_CAPACITY, env.RATE_LIMIT_REFILL_PER_SECOND),
     anthropic: new TokenBucketRateLimiter(env.RATE_LIMIT_CAPACITY, env.RATE_LIMIT_REFILL_PER_SECOND),
     google: new TokenBucketRateLimiter(env.RATE_LIMIT_CAPACITY, env.RATE_LIMIT_REFILL_PER_SECOND),
+    custom: new TokenBucketRateLimiter(env.RATE_LIMIT_CAPACITY, env.RATE_LIMIT_REFILL_PER_SECOND),
   };
 }
 
@@ -70,6 +73,7 @@ function createProviderBaseUrls(env: AppEnv): LLMBaseUrls {
     openai: env.OPENAI_BASE_URL,
     anthropic: env.ANTHROPIC_BASE_URL,
     google: env.GOOGLE_BASE_URL,
+    custom: env.CUSTOM_BASE_URL,
   };
 }
 

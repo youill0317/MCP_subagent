@@ -9,7 +9,7 @@ import path from "path";
 import { z } from "zod";
 var AgentPresetSchema = z.object({
   description: z.string().min(1),
-  provider: z.enum(["openai", "anthropic", "google"]).optional(),
+  provider: z.enum(["openai", "anthropic", "google", "custom"]).optional(),
   model: z.string().trim().min(1).optional(),
   system_prompt: z.string().min(1),
   mcp_servers: z.array(z.string().min(1)).default([]),
@@ -115,10 +115,11 @@ var configuredLevel = process.env.LOG_LEVEL ?? "info";
 var logger = new Logger(configuredLevel);
 
 // src/config/env.ts
-var PROVIDERS = ["openai", "anthropic", "google"];
+var PROVIDERS = ["openai", "anthropic", "google", "custom"];
 var DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 var DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1";
 var DEFAULT_GOOGLE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
+var DEFAULT_CUSTOM_BASE_URL = DEFAULT_OPENAI_BASE_URL;
 var BooleanEnvSchema = z2.preprocess((value) => {
   if (typeof value === "boolean") {
     return value;
@@ -139,9 +140,11 @@ var EnvSchema = z2.object({
   OPENAI_API_KEY: z2.string().trim().optional(),
   ANTHROPIC_API_KEY: z2.string().trim().optional(),
   GOOGLE_API_KEY: z2.string().trim().optional(),
+  CUSTOM_API_KEY: z2.string().trim().optional(),
   OPENAI_BASE_URL: z2.string().trim().optional(),
   ANTHROPIC_BASE_URL: z2.string().trim().optional(),
   GOOGLE_BASE_URL: z2.string().trim().optional(),
+  CUSTOM_BASE_URL: z2.string().trim().optional(),
   DEFAULT_PROVIDER: z2.enum(PROVIDERS).default("anthropic"),
   DEFAULT_MODEL: z2.string().trim().min(1).default("claude-sonnet-4-20250514"),
   MAX_AGENT_ITERATIONS: z2.coerce.number().int().positive().default(15),
@@ -162,9 +165,11 @@ function loadEnv(envPath = path2.resolve(process.cwd(), ".env")) {
     OPENAI_API_KEY: normalizeOptional(parsed.OPENAI_API_KEY),
     ANTHROPIC_API_KEY: normalizeOptional(parsed.ANTHROPIC_API_KEY),
     GOOGLE_API_KEY: normalizeOptional(parsed.GOOGLE_API_KEY),
+    CUSTOM_API_KEY: normalizeOptional(parsed.CUSTOM_API_KEY),
     OPENAI_BASE_URL: normalizeBaseUrl(parsed.OPENAI_BASE_URL, DEFAULT_OPENAI_BASE_URL),
     ANTHROPIC_BASE_URL: normalizeBaseUrl(parsed.ANTHROPIC_BASE_URL, DEFAULT_ANTHROPIC_BASE_URL),
     GOOGLE_BASE_URL: normalizeBaseUrl(parsed.GOOGLE_BASE_URL, DEFAULT_GOOGLE_BASE_URL),
+    CUSTOM_BASE_URL: normalizeBaseUrl(parsed.CUSTOM_BASE_URL, DEFAULT_CUSTOM_BASE_URL),
     DEFAULT_PROVIDER: parsed.DEFAULT_PROVIDER,
     DEFAULT_MODEL: parsed.DEFAULT_MODEL,
     MAX_AGENT_ITERATIONS: parsed.MAX_AGENT_ITERATIONS,
@@ -177,7 +182,8 @@ function loadEnv(envPath = path2.resolve(process.cwd(), ".env")) {
   const providerApiKeys = {
     openai: normalized.OPENAI_API_KEY,
     anthropic: normalized.ANTHROPIC_API_KEY,
-    google: normalized.GOOGLE_API_KEY
+    google: normalized.GOOGLE_API_KEY,
+    custom: normalized.CUSTOM_API_KEY
   };
   const enabledProviders = PROVIDERS.filter((provider) => Boolean(providerApiKeys[provider]));
   for (const provider of PROVIDERS) {
@@ -186,7 +192,7 @@ function loadEnv(envPath = path2.resolve(process.cwd(), ".env")) {
     }
   }
   if (enabledProviders.length === 0) {
-    throw new Error("At least one LLM API key is required (OPENAI/ANTHROPIC/GOOGLE).");
+    throw new Error("At least one LLM API key is required (OPENAI/ANTHROPIC/GOOGLE/CUSTOM).");
   }
   let defaultProvider = normalized.DEFAULT_PROVIDER;
   if (!providerApiKeys[defaultProvider]) {
@@ -1296,6 +1302,8 @@ function createLLMClient(provider, apiKey, baseUrls) {
       return new AnthropicClient(apiKey, baseUrls.anthropic);
     case "google":
       return new GoogleClient(apiKey, baseUrls.google);
+    case "custom":
+      return new OpenAIClient(apiKey, baseUrls.custom);
     default:
       throw new Error(`Unknown provider: ${provider}`);
   }
@@ -1379,14 +1387,16 @@ function createProviderRateLimiters(env) {
   return {
     openai: new TokenBucketRateLimiter(env.RATE_LIMIT_CAPACITY, env.RATE_LIMIT_REFILL_PER_SECOND),
     anthropic: new TokenBucketRateLimiter(env.RATE_LIMIT_CAPACITY, env.RATE_LIMIT_REFILL_PER_SECOND),
-    google: new TokenBucketRateLimiter(env.RATE_LIMIT_CAPACITY, env.RATE_LIMIT_REFILL_PER_SECOND)
+    google: new TokenBucketRateLimiter(env.RATE_LIMIT_CAPACITY, env.RATE_LIMIT_REFILL_PER_SECOND),
+    custom: new TokenBucketRateLimiter(env.RATE_LIMIT_CAPACITY, env.RATE_LIMIT_REFILL_PER_SECOND)
   };
 }
 function createProviderBaseUrls(env) {
   return {
     openai: env.OPENAI_BASE_URL,
     anthropic: env.ANTHROPIC_BASE_URL,
-    google: env.GOOGLE_BASE_URL
+    google: env.GOOGLE_BASE_URL,
+    custom: env.CUSTOM_BASE_URL
   };
 }
 function createErrorResult(agentId, message, runId) {

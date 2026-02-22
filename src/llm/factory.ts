@@ -8,6 +8,7 @@ export interface LLMBaseUrls {
   openai: string;
   anthropic: string;
   google: string;
+  custom: string;
 }
 
 export function createLLMClient(provider: LLMProvider, apiKey: string, baseUrls: LLMBaseUrls): LLMClient {
@@ -18,6 +19,8 @@ export function createLLMClient(provider: LLMProvider, apiKey: string, baseUrls:
       return new AnthropicClient(apiKey, baseUrls.anthropic);
     case "google":
       return new GoogleClient(apiKey, baseUrls.google);
+    case "custom":
+      return new OpenAIClient(apiKey, baseUrls.custom);
     default:
       throw new Error(`Unknown provider: ${provider}`);
   }
