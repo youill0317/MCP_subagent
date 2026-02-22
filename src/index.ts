@@ -2,6 +2,7 @@
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { loadAgentsConfig } from "./config/agents.js";
+import { validateAgentsAgainstMCPServers } from "./config/agents.js";
 import { loadEnv } from "./config/env.js";
 import { loadMCPServersConfig } from "./config/mcp-servers.js";
 import { MCPClientManager } from "./mcp-client/manager.js";
@@ -10,8 +11,13 @@ import { logger } from "./utils/logger.js";
 
 async function main(): Promise<void> {
   const env = loadEnv();
-  const mcpServersConfig = loadMCPServersConfig();
+  const mcpServersConfig = loadMCPServersConfig(undefined, {
+    strictEnv: env.STRICT_CONFIG_VALIDATION,
+  });
   const agentsConfig = loadAgentsConfig(env);
+  if (env.STRICT_CONFIG_VALIDATION) {
+    validateAgentsAgainstMCPServers(agentsConfig, mcpServersConfig);
+  }
 
   const mcpManager = new MCPClientManager();
   await mcpManager.initialize(mcpServersConfig);

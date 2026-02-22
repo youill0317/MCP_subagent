@@ -11,6 +11,8 @@ export interface ChatRequest {
   messages: Message[];
   tools?: ToolDefinition[];
   temperature?: number;
+  max_tokens?: number;
+  signal?: AbortSignal;
 }
 
 export interface ChatResponse {
@@ -21,6 +23,8 @@ export interface ChatResponse {
     output_tokens: number;
   };
   stop_reason: StopReason;
+  raw_stop_reason?: string;
+  retry_count?: number;
 }
 
 export interface ToolCallRequest {

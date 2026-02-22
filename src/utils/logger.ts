@@ -48,7 +48,7 @@ export class Logger {
       return;
     }
 
-    console.error(serialized);
+    console.log(serialized);
   }
 }
 

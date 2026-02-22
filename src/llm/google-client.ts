@@ -33,6 +33,14 @@ export class GoogleClient implements LLMClient {
   constructor(private readonly apiKey: string) {}
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
+    const generationConfig: Record<string, unknown> = {};
+    if (typeof request.temperature === "number") {
+      generationConfig.temperature = request.temperature;
+    }
+    if (typeof request.max_tokens === "number") {
+      generationConfig.maxOutputTokens = request.max_tokens;
+    }
+
     const response = await postJsonWithRetry<GeminiResponse>(
       `${this.baseUrl}/models/${encodeURIComponent(request.model)}:generateContent?key=${encodeURIComponent(this.apiKey)}`,
       {
@@ -55,14 +63,11 @@ export class GoogleClient implements LLMClient {
                 ],
               }
             : {}),
-          ...(typeof request.temperature === "number"
-            ? {
-                generationConfig: {
-                  temperature: request.temperature,
-                },
-              }
-            : {}),
+          ...(Object.keys(generationConfig).length > 0 ? { generationConfig } : {}),
         },
+      },
+      {
+        signal: request.signal,
       },
     );
 
@@ -103,6 +108,7 @@ export class GoogleClient implements LLMClient {
         output_tokens: response.usageMetadata?.candidatesTokenCount ?? 0,
       },
       stop_reason: stopReason,
+      raw_stop_reason: candidate.finishReason,
     };
   }
 }

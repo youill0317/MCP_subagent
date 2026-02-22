@@ -37,7 +37,7 @@ export class AnthropicClient implements LLMClient {
       body: {
         model: request.model,
         system: request.system_prompt,
-        max_tokens: 2048,
+        max_tokens: request.max_tokens ?? 2048,
         temperature: request.temperature,
         messages: toAnthropicMessages(request.messages),
         ...(request.tools && request.tools.length > 0
@@ -50,6 +50,8 @@ export class AnthropicClient implements LLMClient {
             }
           : {}),
       },
+    }, {
+      signal: request.signal,
     });
 
     const blocks = response.content ?? [];
@@ -81,6 +83,7 @@ export class AnthropicClient implements LLMClient {
         output_tokens: response.usage?.output_tokens ?? 0,
       },
       stop_reason: stopReason,
+      raw_stop_reason: response.stop_reason ?? undefined,
     };
   }
 }

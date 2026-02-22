@@ -42,6 +42,10 @@ export class OpenAIClient implements LLMClient {
       temperature: request.temperature,
     };
 
+    if (typeof request.max_tokens === "number") {
+      body.max_tokens = request.max_tokens;
+    }
+
     if (request.tools && request.tools.length > 0) {
       body.tools = request.tools.map(toOpenAIToolDefinition);
     }
@@ -53,6 +57,9 @@ export class OpenAIClient implements LLMClient {
           Authorization: `Bearer ${this.apiKey}`,
         },
         body,
+      },
+      {
+        signal: request.signal,
       },
     );
 
@@ -76,6 +83,7 @@ export class OpenAIClient implements LLMClient {
         output_tokens: response.usage?.completion_tokens ?? 0,
       },
       stop_reason: stopReason,
+      raw_stop_reason: choice.finish_reason ?? undefined,
     };
   }
 }

@@ -16,9 +16,29 @@ export interface AppEnv {
   MAX_AGENT_ITERATIONS: number;
   MAX_PARALLEL_AGENTS: number;
   AGENT_TIMEOUT_MS: number;
+  STRICT_CONFIG_VALIDATION: boolean;
+  RATE_LIMIT_CAPACITY: number;
+  RATE_LIMIT_REFILL_PER_SECOND: number;
   providerApiKeys: Record<LLMProvider, string | undefined>;
   enabledProviders: LLMProvider[];
 }
+
+const BooleanEnvSchema = z.preprocess((value) => {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value !== "string") {
+    return value;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") {
+    return true;
+  }
+  if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") {
+    return false;
+  }
+  return value;
+}, z.boolean());
 
 const EnvSchema = z.object({
   OPENAI_API_KEY: z.string().trim().optional(),
@@ -29,6 +49,9 @@ const EnvSchema = z.object({
   MAX_AGENT_ITERATIONS: z.coerce.number().int().positive().default(15),
   MAX_PARALLEL_AGENTS: z.coerce.number().int().min(1).max(20).default(5),
   AGENT_TIMEOUT_MS: z.coerce.number().int().min(1000).default(120_000),
+  STRICT_CONFIG_VALIDATION: BooleanEnvSchema.default(true),
+  RATE_LIMIT_CAPACITY: z.coerce.number().min(1).default(10),
+  RATE_LIMIT_REFILL_PER_SECOND: z.coerce.number().positive().default(5),
 });
 
 let cachedEnv: AppEnv | null = null;
@@ -50,6 +73,9 @@ export function loadEnv(envPath = path.resolve(process.cwd(), ".env")): AppEnv {
     MAX_AGENT_ITERATIONS: parsed.MAX_AGENT_ITERATIONS,
     MAX_PARALLEL_AGENTS: parsed.MAX_PARALLEL_AGENTS,
     AGENT_TIMEOUT_MS: parsed.AGENT_TIMEOUT_MS,
+    STRICT_CONFIG_VALIDATION: parsed.STRICT_CONFIG_VALIDATION,
+    RATE_LIMIT_CAPACITY: parsed.RATE_LIMIT_CAPACITY,
+    RATE_LIMIT_REFILL_PER_SECOND: parsed.RATE_LIMIT_REFILL_PER_SECOND,
   };
 
   const providerApiKeys: Record<LLMProvider, string | undefined> = {
