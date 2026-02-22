@@ -10,12 +10,16 @@ export class TokenBucketRateLimiter {
     this.lastRefillMs = Date.now();
   }
 
-  async consume(amount = 1): Promise<void> {
+  async consume(amount = 1, signal?: AbortSignal): Promise<void> {
     if (amount <= 0) {
       return;
     }
 
     while (true) {
+      if (signal?.aborted) {
+        throw createAbortError();
+      }
+
       this.refill();
       if (this.tokens >= amount) {
         this.tokens -= amount;
@@ -24,7 +28,7 @@ export class TokenBucketRateLimiter {
 
       const missingTokens = amount - this.tokens;
       const waitMs = Math.ceil((missingTokens / this.refillPerSecond) * 1000);
-      await sleep(Math.max(waitMs, 10));
+      await sleep(Math.max(waitMs, 10), signal);
     }
   }
 
@@ -41,8 +45,38 @@ export class TokenBucketRateLimiter {
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (!signal) {
+      setTimeout(resolve, ms);
+      return;
+    }
+
+    if (signal.aborted) {
+      reject(createAbortError());
+      return;
+    }
+
+    let timeout: NodeJS.Timeout | undefined;
+    const onAbort = () => {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      signal.removeEventListener("abort", onAbort);
+      reject(createAbortError());
+    };
+
+    timeout = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+
+    signal.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+function createAbortError(): Error {
+  const abortError = new Error("Rate limiter wait aborted");
+  abortError.name = "AbortError";
+  return abortError;
 }

@@ -39,12 +39,13 @@ export function createServer(deps: CreateServerDeps): McpServer {
     delegateTask,
   });
 
+  const availableAgentIds = Object.keys(deps.agentsConfig.agents);
+
   const debateTask = createDebateTaskExecutor({
     delegateTask,
     maxParallelAgents: deps.env.MAX_PARALLEL_AGENTS,
+    availableAgentIds,
   });
-
-  const availableAgentIds = Object.keys(deps.agentsConfig.agents);
 
   registerDelegateTaskTool(server, {
     delegateTask,

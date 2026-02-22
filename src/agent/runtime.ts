@@ -71,7 +71,7 @@ export async function runAgent(
       const invocation = await invokeLLMWithRetries(
         async () => {
           if (options.rateLimiter) {
-            await options.rateLimiter.consume(1);
+            await options.rateLimiter.consume(1, options.signal);
           }
 
           return await llmClient.chat({
@@ -239,30 +239,39 @@ async function sleepWithBackoff(attempt: number, signal?: AbortSignal): Promise<
   const jitter = Math.floor(Math.random() * (baseDelayMs * 0.2));
   const waitMs = baseDelayMs + jitter;
 
-  await new Promise((resolve) => {
+  await new Promise<void>((resolve, reject) => {
     if (!signal) {
       setTimeout(resolve, waitMs);
       return;
     }
 
     if (signal.aborted) {
-      resolve();
+      reject(createAbortError("Retry wait aborted"));
       return;
     }
 
+    let timeout: NodeJS.Timeout | undefined;
     const onAbort = () => {
-      clearTimeout(timeout);
+      if (timeout) {
+        clearTimeout(timeout);
+      }
       signal.removeEventListener("abort", onAbort);
-      resolve();
+      reject(createAbortError("Retry wait aborted"));
     };
 
-    const timeout = setTimeout(() => {
+    timeout = setTimeout(() => {
       signal.removeEventListener("abort", onAbort);
       resolve();
     }, waitMs);
 
-    signal.addEventListener("abort", onAbort);
+    signal.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+function createAbortError(message: string): Error {
+  const abortError = new Error(message);
+  abortError.name = "AbortError";
+  return abortError;
 }
 
 function createResult(params: {

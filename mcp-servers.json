@@ -2,7 +2,7 @@
   "servers": {
     "mcp_search": {
       "command": "node",
-      "args": ["C:/Users/user/Documents/Projects_src/MCP_search/dist/index.js"],
+      "args": ["../../MCP_search/dist/index.js"],
       "env": {
         "BRAVE_API_KEY": "${BRAVE_API_KEY}",
         "TAVILY_API_KEY": "${TAVILY_API_KEY}"
@@ -11,9 +11,9 @@
     },
     "mcp_obsidian": {
       "command": "node",
-      "args": ["C:/Users/user/Documents/Projects_src/My_mcp/dist/index.js"],
+      "args": ["../../My_mcp/dist/index.js"],
       "env": {
-        "MARKDOWN_BASE_DIR": "C:/Users/user/Documents/Obsidian"
+        "MARKDOWN_BASE_DIR": "../../Obsidian"
       },
       "description": "Provides tools to browse and read Obsidian markdown files"
     }

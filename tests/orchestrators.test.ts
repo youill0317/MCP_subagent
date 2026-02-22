@@ -87,6 +87,7 @@ test("debate runs multiple rounds with shared context and moderator synthesis", 
   const debateTask = createDebateTaskExecutor({
     delegateTask,
     maxParallelAgents: 2,
+    availableAgentIds: ["creative", "critical", "logical"],
   });
 
   const result = await debateTask({
@@ -158,6 +159,7 @@ test("debate continues on participant failure and returns partial error summary"
   const debateTask = createDebateTaskExecutor({
     delegateTask,
     maxParallelAgents: 2,
+    availableAgentIds: ["creative", "critical", "logical"],
   });
 
   const result = await debateTask({
@@ -171,6 +173,63 @@ test("debate continues on participant failure and returns partial error summary"
   assert.match(result.error ?? "", /Round 2 \(critical\): failed in round 2/);
   assert.ok(result.rounds[1]?.responses.find((item) => item.agent_id === "critical")?.result.error);
   assert.ok(calls.some((call) => call.agentId === "logical"));
+});
+
+test("debate falls back to the last participant when logical moderator is unavailable", async () => {
+  const calls: Array<{ agentId: string; task: string; context?: string }> = [];
+
+  const delegateTask = async (agentId: string, task: string, context?: string): Promise<AgentRunResult> => {
+    calls.push({ agentId, task, context });
+
+    if (task.startsWith("Synthesize the entire discussion")) {
+      return makeResult({
+        agent_id: agentId,
+        final_response: "fallback conclusion",
+        total_tokens: { input: 1, output: 1 },
+      });
+    }
+
+    return makeResult({
+      agent_id: agentId,
+      final_response: `${agentId}-reply`,
+      total_tokens: { input: 1, output: 1 },
+    });
+  };
+
+  const debateTask = createDebateTaskExecutor({
+    delegateTask,
+    maxParallelAgents: 2,
+    availableAgentIds: ["creative", "critical"],
+  });
+
+  const result = await debateTask({
+    agentIds: ["creative", "critical"],
+    task: "Debate rollout risk",
+    rounds: 2,
+  });
+
+  assert.equal(result.moderator_agent_id, "critical");
+  assert.equal(result.conclusion, "fallback conclusion");
+  assert.equal(calls.filter((call) => call.task.startsWith("Synthesize the entire discussion")).length, 1);
+  assert.equal(calls.at(-1)?.agentId, "critical");
+});
+
+test("debate rejects unknown moderator when available agents are provided", async () => {
+  const debateTask = createDebateTaskExecutor({
+    delegateTask: async () => makeResult(),
+    maxParallelAgents: 2,
+    availableAgentIds: ["creative", "critical"],
+  });
+
+  await assert.rejects(
+    debateTask({
+      agentIds: ["creative", "critical"],
+      task: "Debate release plan",
+      rounds: 1,
+      moderatorAgentId: "logical",
+    }),
+    /Unknown moderator_agent_id/,
+  );
 });
 
 test("pipeline passes previous output as context and stops on error", async () => {

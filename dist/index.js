@@ -633,7 +633,7 @@ ${task}` : task;
       const invocation = await invokeLLMWithRetries(
         async () => {
           if (options.rateLimiter) {
-            await options.rateLimiter.consume(1);
+            await options.rateLimiter.consume(1, options.signal);
           }
           return await llmClient.chat({
             model: agentConfig.model,
@@ -776,26 +776,34 @@ async function sleepWithBackoff(attempt, signal) {
   const baseDelayMs = 300 * Math.pow(2, attempt);
   const jitter = Math.floor(Math.random() * (baseDelayMs * 0.2));
   const waitMs = baseDelayMs + jitter;
-  await new Promise((resolve) => {
+  await new Promise((resolve, reject) => {
     if (!signal) {
       setTimeout(resolve, waitMs);
       return;
     }
     if (signal.aborted) {
-      resolve();
+      reject(createAbortError("Retry wait aborted"));
       return;
     }
+    let timeout;
     const onAbort = () => {
-      clearTimeout(timeout);
+      if (timeout) {
+        clearTimeout(timeout);
+      }
       signal.removeEventListener("abort", onAbort);
-      resolve();
+      reject(createAbortError("Retry wait aborted"));
     };
-    const timeout = setTimeout(() => {
+    timeout = setTimeout(() => {
       signal.removeEventListener("abort", onAbort);
       resolve();
     }, waitMs);
-    signal.addEventListener("abort", onAbort);
+    signal.addEventListener("abort", onAbort, { once: true });
   });
+}
+function createAbortError(message) {
+  const abortError = new Error(message);
+  abortError.name = "AbortError";
+  return abortError;
 }
 function createResult(params) {
   return {
@@ -1319,11 +1327,14 @@ var TokenBucketRateLimiter = class {
   }
   tokens;
   lastRefillMs;
-  async consume(amount = 1) {
+  async consume(amount = 1, signal) {
     if (amount <= 0) {
       return;
     }
     while (true) {
+      if (signal?.aborted) {
+        throw createAbortError2();
+      }
       this.refill();
       if (this.tokens >= amount) {
         this.tokens -= amount;
@@ -1331,7 +1342,7 @@ var TokenBucketRateLimiter = class {
       }
       const missingTokens = amount - this.tokens;
       const waitMs = Math.ceil(missingTokens / this.refillPerSecond * 1e3);
-      await sleep(Math.max(waitMs, 10));
+      await sleep(Math.max(waitMs, 10), signal);
     }
   }
   refill() {
@@ -1345,10 +1356,35 @@ var TokenBucketRateLimiter = class {
     this.lastRefillMs = now;
   }
 };
-function sleep(ms) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (!signal) {
+      setTimeout(resolve, ms);
+      return;
+    }
+    if (signal.aborted) {
+      reject(createAbortError2());
+      return;
+    }
+    let timeout;
+    const onAbort = () => {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      signal.removeEventListener("abort", onAbort);
+      reject(createAbortError2());
+    };
+    timeout = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
   });
+}
+function createAbortError2() {
+  const abortError = new Error("Rate limiter wait aborted");
+  abortError.name = "AbortError";
+  return abortError;
 }
 
 // src/orchestrator/delegate.ts
@@ -1437,7 +1473,8 @@ function createDebateTaskExecutor(deps) {
     const totalTokens = { input: 0, output: 0 };
     const debateRounds = [];
     const errors = [];
-    const moderatorAgentId = input.moderatorAgentId ?? "logical";
+    const moderatorAgentId = resolveModeratorAgentId(input, deps.availableAgentIds);
+    validateModeratorAgentId(moderatorAgentId, deps.availableAgentIds);
     const maxParallelAgents = Math.max(1, deps.maxParallelAgents);
     let discussionLog = "";
     for (let roundNumber = 1; roundNumber <= input.rounds; roundNumber += 1) {
@@ -1497,6 +1534,26 @@ function validateInput(input) {
   if (!Number.isInteger(input.rounds) || input.rounds < 1 || input.rounds > 5) {
     throw new Error("rounds must be an integer between 1 and 5");
   }
+}
+function resolveModeratorAgentId(input, availableAgentIds) {
+  if (input.moderatorAgentId) {
+    return input.moderatorAgentId;
+  }
+  if (availableAgentIds?.includes("logical") || input.agentIds.includes("logical")) {
+    return "logical";
+  }
+  return input.agentIds[input.agentIds.length - 1];
+}
+function validateModeratorAgentId(moderatorAgentId, availableAgentIds) {
+  if (!availableAgentIds) {
+    return;
+  }
+  if (availableAgentIds.includes(moderatorAgentId)) {
+    return;
+  }
+  throw new Error(
+    `Unknown moderator_agent_id: ${moderatorAgentId}. Available agents: ${availableAgentIds.join(", ")}`
+  );
 }
 function formatRound(roundNumber, responses) {
   const sections = [`## Round ${roundNumber}`];
@@ -1851,11 +1908,12 @@ function createServer(deps) {
   const pipelineTask = createPipelineTaskExecutor({
     delegateTask
   });
+  const availableAgentIds = Object.keys(deps.agentsConfig.agents);
   const debateTask = createDebateTaskExecutor({
     delegateTask,
-    maxParallelAgents: deps.env.MAX_PARALLEL_AGENTS
+    maxParallelAgents: deps.env.MAX_PARALLEL_AGENTS,
+    availableAgentIds
   });
-  const availableAgentIds = Object.keys(deps.agentsConfig.agents);
   registerDelegateTaskTool(server, {
     delegateTask,
     availableAgentIds

@@ -25,6 +25,7 @@ export interface DebateTaskInput {
 export interface DebateTaskDeps {
   delegateTask: DelegateTaskFn;
   maxParallelAgents: number;
+  availableAgentIds?: string[];
 }
 
 export function createDebateTaskExecutor(deps: DebateTaskDeps) {
@@ -34,7 +35,8 @@ export function createDebateTaskExecutor(deps: DebateTaskDeps) {
     const totalTokens = { input: 0, output: 0 };
     const debateRounds: DebateRound[] = [];
     const errors: string[] = [];
-    const moderatorAgentId = input.moderatorAgentId ?? "logical";
+    const moderatorAgentId = resolveModeratorAgentId(input, deps.availableAgentIds);
+    validateModeratorAgentId(moderatorAgentId, deps.availableAgentIds);
     const maxParallelAgents = Math.max(1, deps.maxParallelAgents);
     let discussionLog = "";
 
@@ -106,6 +108,32 @@ function validateInput(input: DebateTaskInput): void {
   if (!Number.isInteger(input.rounds) || input.rounds < 1 || input.rounds > 5) {
     throw new Error("rounds must be an integer between 1 and 5");
   }
+}
+
+function resolveModeratorAgentId(input: DebateTaskInput, availableAgentIds?: string[]): string {
+  if (input.moderatorAgentId) {
+    return input.moderatorAgentId;
+  }
+
+  if (availableAgentIds?.includes("logical") || input.agentIds.includes("logical")) {
+    return "logical";
+  }
+
+  return input.agentIds[input.agentIds.length - 1];
+}
+
+function validateModeratorAgentId(moderatorAgentId: string, availableAgentIds?: string[]): void {
+  if (!availableAgentIds) {
+    return;
+  }
+
+  if (availableAgentIds.includes(moderatorAgentId)) {
+    return;
+  }
+
+  throw new Error(
+    `Unknown moderator_agent_id: ${moderatorAgentId}. Available agents: ${availableAgentIds.join(", ")}`,
+  );
 }
 
 function formatRound(
