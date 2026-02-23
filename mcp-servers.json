@@ -1,13 +1,15 @@
 {
   "servers": {
     "mcp_search": {
-      "command": "node",
-      "args": ["../../MCP_search/dist/index.js"],
+      "command": "npx",
+      "args": [
+        "-y",
+        "exa-mcp-server"
+      ],
       "env": {
-        "BRAVE_API_KEY": "${BRAVE_API_KEY}",
-        "TAVILY_API_KEY": "${TAVILY_API_KEY}"
+        "EXA_API_KEY": "${EXA_API_KEY}"
       },
-      "description": "Provides web search, paper search, and news search tools"
+      "description": "Provides Exa web search and research tools"
     },
     "mcp_obsidian": {
       "command": "node",
