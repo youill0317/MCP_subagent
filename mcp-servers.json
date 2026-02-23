@@ -4,7 +4,8 @@
       "command": "npx",
       "args": [
         "-y",
-        "exa-mcp-server"
+        "mcp-remote",
+        "https://mcp.exa.ai/mcp?tools=web_search_exa,web_search_advanced_exa,get_code_context_exa,crawling_exa,company_research_exa,people_search_exa,deep_researcher_start,deep_researcher_check"
       ],
       "env": {
         "EXA_API_KEY": "${EXA_API_KEY}"
@@ -13,9 +14,11 @@
     },
     "mcp_obsidian": {
       "command": "node",
-      "args": ["../../My_mcp/dist/index.js"],
+      "args": [
+        "C:\\Users\\user\\Documents\\Projects_src\\MCP\\MCP_Obsidian\\dist\\index.js"
+      ],
       "env": {
-        "MARKDOWN_BASE_DIR": "../../Obsidian"
+        "MARKDOWN_BASE_DIR": "C:\\Users\\user\\Documents\\Projects\\Projects"
       },
       "description": "Provides tools to browse and read Obsidian markdown files"
     }

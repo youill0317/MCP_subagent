@@ -9,7 +9,7 @@ import path from "path";
 import { z } from "zod";
 var AgentPresetSchema = z.object({
   description: z.string().min(1),
-  provider: z.enum(["openai", "anthropic", "google", "custom"]).optional(),
+  provider: z.enum(["openai", "anthropic", "google", "custom", "codex"]).optional(),
   model: z.string().trim().min(1).optional(),
   system_prompt: z.string().min(1),
   mcp_servers: z.array(z.string().min(1)).default([]),
@@ -25,11 +25,13 @@ function loadAgentsConfig(env, filePath = path.resolve(process.cwd(), "agents.js
   const parsed = AgentsFileSchema.parse(JSON.parse(raw));
   const agents = {};
   for (const [name, preset] of Object.entries(parsed.agents)) {
+    const provider = preset.provider ?? env.DEFAULT_PROVIDER;
+    const model = preset.model ?? (provider === "codex" ? env.CODEX_MODEL_DEFAULT : env.DEFAULT_MODEL);
     agents[name] = {
       name,
       description: preset.description,
-      provider: preset.provider ?? env.DEFAULT_PROVIDER,
-      model: preset.model ?? env.DEFAULT_MODEL,
+      provider,
+      model,
       system_prompt: preset.system_prompt,
       mcp_servers: preset.mcp_servers,
       max_iterations: preset.max_iterations ?? env.MAX_AGENT_ITERATIONS,
@@ -115,11 +117,13 @@ var configuredLevel = process.env.LOG_LEVEL ?? "info";
 var logger = new Logger(configuredLevel);
 
 // src/config/env.ts
-var PROVIDERS = ["openai", "anthropic", "google", "custom"];
+var PROVIDERS = ["openai", "anthropic", "google", "custom", "codex"];
 var DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 var DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1";
 var DEFAULT_GOOGLE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 var DEFAULT_CUSTOM_BASE_URL = DEFAULT_OPENAI_BASE_URL;
+var DEFAULT_CODEX_CLI_PATH = "codex";
+var DEFAULT_CODEX_MODEL = "gpt-5-codex";
 var BooleanEnvSchema = z2.preprocess((value) => {
   if (typeof value === "boolean") {
     return value;
@@ -141,6 +145,9 @@ var EnvSchema = z2.object({
   ANTHROPIC_API_KEY: z2.string().trim().optional(),
   GOOGLE_API_KEY: z2.string().trim().optional(),
   CUSTOM_API_KEY: z2.string().trim().optional(),
+  CODEX_ENABLED: BooleanEnvSchema.default(false),
+  CODEX_CLI_PATH: z2.string().trim().optional(),
+  CODEX_MODEL_DEFAULT: z2.string().trim().optional(),
   OPENAI_BASE_URL: z2.string().trim().optional(),
   ANTHROPIC_BASE_URL: z2.string().trim().optional(),
   GOOGLE_BASE_URL: z2.string().trim().optional(),
@@ -166,6 +173,9 @@ function loadEnv(envPath = path2.resolve(process.cwd(), ".env")) {
     ANTHROPIC_API_KEY: normalizeOptional(parsed.ANTHROPIC_API_KEY),
     GOOGLE_API_KEY: normalizeOptional(parsed.GOOGLE_API_KEY),
     CUSTOM_API_KEY: normalizeOptional(parsed.CUSTOM_API_KEY),
+    CODEX_ENABLED: parsed.CODEX_ENABLED,
+    CODEX_CLI_PATH: normalizeBaseValue(parsed.CODEX_CLI_PATH, DEFAULT_CODEX_CLI_PATH),
+    CODEX_MODEL_DEFAULT: normalizeBaseValue(parsed.CODEX_MODEL_DEFAULT, DEFAULT_CODEX_MODEL),
     OPENAI_BASE_URL: normalizeBaseUrl(parsed.OPENAI_BASE_URL, DEFAULT_OPENAI_BASE_URL),
     ANTHROPIC_BASE_URL: normalizeBaseUrl(parsed.ANTHROPIC_BASE_URL, DEFAULT_ANTHROPIC_BASE_URL),
     GOOGLE_BASE_URL: normalizeBaseUrl(parsed.GOOGLE_BASE_URL, DEFAULT_GOOGLE_BASE_URL),
@@ -183,19 +193,31 @@ function loadEnv(envPath = path2.resolve(process.cwd(), ".env")) {
     openai: normalized.OPENAI_API_KEY,
     anthropic: normalized.ANTHROPIC_API_KEY,
     google: normalized.GOOGLE_API_KEY,
-    custom: normalized.CUSTOM_API_KEY
+    custom: normalized.CUSTOM_API_KEY,
+    codex: void 0
   };
-  const enabledProviders = PROVIDERS.filter((provider) => Boolean(providerApiKeys[provider]));
+  const enabledProviders = PROVIDERS.filter((provider) => {
+    if (provider === "codex") {
+      return normalized.CODEX_ENABLED;
+    }
+    return Boolean(providerApiKeys[provider]);
+  });
   for (const provider of PROVIDERS) {
+    if (provider === "codex") {
+      if (!normalized.CODEX_ENABLED) {
+        logger.warn("codex disabled (CODEX_ENABLED=false)");
+      }
+      continue;
+    }
     if (!providerApiKeys[provider]) {
       logger.warn(`${provider} disabled (no API key)`);
     }
   }
   if (enabledProviders.length === 0) {
-    throw new Error("At least one LLM API key is required (OPENAI/ANTHROPIC/GOOGLE/CUSTOM).");
+    throw new Error("No enabled LLM provider. Configure API keys or enable Codex with CODEX_ENABLED=true.");
   }
   let defaultProvider = normalized.DEFAULT_PROVIDER;
-  if (!providerApiKeys[defaultProvider]) {
+  if (!enabledProviders.includes(defaultProvider)) {
     defaultProvider = enabledProviders[0];
     logger.warn("DEFAULT_PROVIDER is unavailable; falling back to first enabled provider", {
       requested: normalized.DEFAULT_PROVIDER,
@@ -218,11 +240,14 @@ function normalizeOptional(value) {
   return trimmed.length > 0 ? trimmed : void 0;
 }
 function normalizeBaseUrl(value, fallback) {
+  return normalizeBaseValue(value, fallback).replace(/\/+$/g, "");
+}
+function normalizeBaseValue(value, fallback) {
   const trimmed = value?.trim() ?? "";
   if (!trimmed) {
     return fallback;
   }
-  return trimmed.replace(/\/+$/g, "");
+  return trimmed;
 }
 
 // src/config/mcp-servers.ts
@@ -1301,17 +1326,297 @@ function stripTrailingSlash3(value) {
   return value.replace(/\/+$/g, "");
 }
 
+// src/llm/codex-cli-client.ts
+import { spawn } from "child_process";
+var CodexCliClient = class {
+  provider = "codex";
+  cliPath;
+  mcpServers;
+  cwd;
+  constructor(options) {
+    this.cliPath = options.cliPath?.trim() || "codex";
+    this.mcpServers = options.mcpServers ?? {};
+    this.cwd = options.cwd ?? process.cwd();
+  }
+  async chat(request) {
+    const prompt = buildPrompt(request.system_prompt, request.messages);
+    const args = buildCodexExecArgs({
+      model: request.model,
+      prompt,
+      mcpServers: this.mcpServers
+    });
+    const { stdout, stderr } = await runCommand(this.cliPath, args, {
+      cwd: this.cwd,
+      signal: request.signal
+    });
+    const parsed = parseCodexOutput(stdout);
+    if (parsed.errorMessages.length > 0) {
+      throw new Error(`Codex execution failed: ${parsed.errorMessages.join(" | ")}`);
+    }
+    const content = parsed.finalText.trim();
+    if (!content) {
+      const detail = stderr.trim() || stdout.trim() || "No assistant response in codex output";
+      throw new Error(`Codex returned empty output: ${detail}`);
+    }
+    return {
+      content,
+      usage: parsed.usage,
+      stop_reason: "end_turn"
+    };
+  }
+};
+function buildCodexExecArgs(params) {
+  const configOverrides = buildMcpOverrides(params.mcpServers);
+  const args = [];
+  for (const override of configOverrides) {
+    args.push("--config", override);
+  }
+  args.push(
+    "exec",
+    "--skip-git-repo-check",
+    "--json",
+    "--model",
+    params.model,
+    params.prompt
+  );
+  return args;
+}
+function buildMcpOverrides(mcpServers) {
+  const overrides = [];
+  const names = Object.keys(mcpServers).sort();
+  for (const name of names) {
+    const server = mcpServers[name];
+    const key = `mcp_servers.${toTomlKey(name)}`;
+    overrides.push(`${key}.enabled=true`);
+    overrides.push(`${key}.command=${toTomlString(server.command)}`);
+    overrides.push(`${key}.args=${toTomlArray(server.args)}`);
+    if (server.cwd) {
+      overrides.push(`${key}.cwd=${toTomlString(server.cwd)}`);
+    }
+    const envEntries = Object.entries(server.env).sort(([a], [b]) => a.localeCompare(b));
+    for (const [envKey, envValue] of envEntries) {
+      overrides.push(`${key}.env.${toTomlKey(envKey)}=${toTomlString(envValue)}`);
+    }
+  }
+  return overrides;
+}
+function toTomlArray(values) {
+  return `[${values.map((value) => toTomlString(value)).join(", ")}]`;
+}
+function toTomlString(value) {
+  return JSON.stringify(value ?? "");
+}
+function toTomlKey(key) {
+  return /^[A-Za-z0-9_-]+$/.test(key) ? key : JSON.stringify(key);
+}
+function buildPrompt(systemPrompt, messages) {
+  const lines = [
+    "## System Prompt",
+    systemPrompt,
+    "",
+    "## Conversation"
+  ];
+  for (const message of messages) {
+    lines.push(...formatMessage(message));
+  }
+  lines.push("");
+  lines.push("Respond to the latest user request.");
+  return lines.join("\n");
+}
+function formatMessage(message) {
+  if (message.role === "tool_result") {
+    const results = Array.isArray(message.content) ? message.content : [];
+    const chunks = ["[tool_result]"];
+    for (const result of results) {
+      chunks.push(
+        `tool_call_id=${result.tool_call_id} tool_name=${result.tool_name ?? "unknown"} is_error=${Boolean(result.is_error)}`
+      );
+      chunks.push(result.result);
+    }
+    return chunks;
+  }
+  const lines = [`[${message.role}]`];
+  lines.push(typeof message.content === "string" ? message.content : "");
+  if (message.role === "assistant" && message.tool_calls && message.tool_calls.length > 0) {
+    lines.push("[assistant_tool_calls]");
+    for (const toolCall of message.tool_calls) {
+      lines.push(`${toolCall.id} ${toolCall.name} ${JSON.stringify(toolCall.arguments ?? {})}`);
+    }
+  }
+  return lines;
+}
+async function runCommand(command, args, options) {
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    let stdout = "";
+    let stderr = "";
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: process.env,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    const finalize = (callback) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      options.signal?.removeEventListener("abort", onAbort);
+      callback();
+    };
+    const onAbort = () => {
+      child.kill();
+      const abortError = new Error("Codex execution aborted");
+      abortError.name = "AbortError";
+      finalize(() => reject(abortError));
+    };
+    if (options.signal) {
+      if (options.signal.aborted) {
+        onAbort();
+        return;
+      }
+      options.signal.addEventListener("abort", onAbort, { once: true });
+    }
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", (error) => {
+      const maybeErrno = error;
+      if (maybeErrno.code === "ENOENT") {
+        finalize(() => reject(new Error(`Codex CLI not found: ${command}. Set CODEX_CLI_PATH correctly.`)));
+        return;
+      }
+      finalize(() => reject(error));
+    });
+    child.on("close", (code, signal) => {
+      if (code === 0) {
+        finalize(() => resolve({ stdout, stderr }));
+        return;
+      }
+      const detail = stderr.trim() || stdout.trim() || `signal=${signal ?? "unknown"}`;
+      finalize(() => reject(new Error(`Codex CLI exited with code ${code ?? -1}: ${detail}`)));
+    });
+  });
+}
+function parseCodexOutput(stdout) {
+  let finalText = "";
+  let usage = {
+    input_tokens: 0,
+    output_tokens: 0
+  };
+  const errorMessages = [];
+  for (const rawLine of stdout.split(/\r?\n/g)) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!parsed || typeof parsed !== "object") {
+      continue;
+    }
+    const event = parsed;
+    if (event.type === "error" && typeof event.message === "string" && event.message.trim()) {
+      errorMessages.push(event.message.trim());
+      continue;
+    }
+    if (event.type === "item.completed") {
+      const candidate = extractItemText(event.item);
+      if (candidate.trim()) {
+        finalText = candidate.trim();
+      }
+      continue;
+    }
+    if (event.type === "turn.completed") {
+      const usagePayload = event.usage ?? event.turn?.usage;
+      if (usagePayload) {
+        usage = {
+          input_tokens: readTokenCount(usagePayload, ["input_tokens", "prompt_tokens", "inputTokens"]),
+          output_tokens: readTokenCount(usagePayload, ["output_tokens", "completion_tokens", "outputTokens"])
+        };
+      }
+    }
+  }
+  return {
+    finalText,
+    usage,
+    errorMessages
+  };
+}
+function extractItemText(item) {
+  if (!item || typeof item !== "object") {
+    return "";
+  }
+  const record = item;
+  if (record.type && !record.type.includes("message")) {
+    return "";
+  }
+  if (typeof record.text === "string") {
+    return record.text;
+  }
+  if (typeof record.output_text === "string") {
+    return record.output_text;
+  }
+  if (!Array.isArray(record.content)) {
+    return "";
+  }
+  const fragments = record.content.map((part) => {
+    if (typeof part === "string") {
+      return part;
+    }
+    if (!part || typeof part !== "object") {
+      return "";
+    }
+    const contentPart = part;
+    return typeof contentPart.text === "string" ? contentPart.text : "";
+  }).filter((part) => part.length > 0);
+  return fragments.join("\n").trim();
+}
+function readTokenCount(payload, keys) {
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return Math.max(0, Math.floor(value));
+    }
+  }
+  return 0;
+}
+
 // src/llm/factory.ts
-function createLLMClient(provider, apiKey, baseUrls) {
+function createLLMClient(provider, apiKey, baseUrls, options = {}) {
   switch (provider) {
     case "openai":
+      if (!apiKey) {
+        throw new Error("openai API key is not configured");
+      }
       return new OpenAIClient(apiKey, baseUrls.openai);
     case "anthropic":
+      if (!apiKey) {
+        throw new Error("anthropic API key is not configured");
+      }
       return new AnthropicClient(apiKey, baseUrls.anthropic);
     case "google":
+      if (!apiKey) {
+        throw new Error("google API key is not configured");
+      }
       return new GoogleClient(apiKey, baseUrls.google);
     case "custom":
+      if (!apiKey) {
+        throw new Error("custom API key is not configured");
+      }
       return new OpenAIClient(apiKey, baseUrls.custom);
+    case "codex":
+      if (!options.codex) {
+        throw new Error("codex options are required");
+      }
+      return new CodexCliClient(options.codex);
     default:
       throw new Error(`Unknown provider: ${provider}`);
   }
@@ -1396,10 +1701,19 @@ function createDelegateTaskExecutor(deps) {
     try {
       const agentConfig = getAgentConfig(deps.agentsConfig, agentId);
       const apiKey = deps.env.providerApiKeys[agentConfig.provider];
-      if (!apiKey) {
+      if (agentConfig.provider === "codex" && !deps.env.CODEX_ENABLED) {
+        return createErrorResult(agentId, "codex provider is disabled (CODEX_ENABLED=false)", runId);
+      }
+      if (agentConfig.provider !== "codex" && !apiKey) {
         return createErrorResult(agentId, `${agentConfig.provider} API key is not configured`, runId);
       }
-      const llmClient = createLLMClient(agentConfig.provider, apiKey, providerBaseUrls);
+      const llmClient = createLLMClient(agentConfig.provider, apiKey, providerBaseUrls, {
+        codex: {
+          cliPath: deps.env.CODEX_CLI_PATH,
+          mcpServers: resolveAgentMcpServers(agentConfig.mcp_servers, deps.mcpServersConfig),
+          cwd: process.cwd()
+        }
+      });
       const abortController = new AbortController();
       const execution = runAgent(agentConfig, task, context, llmClient, deps.mcpManager, {
         signal: abortController.signal,
@@ -1424,7 +1738,8 @@ function createProviderRateLimiters(env) {
     openai: new TokenBucketRateLimiter(env.RATE_LIMIT_CAPACITY, env.RATE_LIMIT_REFILL_PER_SECOND),
     anthropic: new TokenBucketRateLimiter(env.RATE_LIMIT_CAPACITY, env.RATE_LIMIT_REFILL_PER_SECOND),
     google: new TokenBucketRateLimiter(env.RATE_LIMIT_CAPACITY, env.RATE_LIMIT_REFILL_PER_SECOND),
-    custom: new TokenBucketRateLimiter(env.RATE_LIMIT_CAPACITY, env.RATE_LIMIT_REFILL_PER_SECOND)
+    custom: new TokenBucketRateLimiter(env.RATE_LIMIT_CAPACITY, env.RATE_LIMIT_REFILL_PER_SECOND),
+    codex: new TokenBucketRateLimiter(env.RATE_LIMIT_CAPACITY, env.RATE_LIMIT_REFILL_PER_SECOND)
   };
 }
 function createProviderBaseUrls(env) {
@@ -1434,6 +1749,17 @@ function createProviderBaseUrls(env) {
     google: env.GOOGLE_BASE_URL,
     custom: env.CUSTOM_BASE_URL
   };
+}
+function resolveAgentMcpServers(agentMcpServerNames, mcpServersConfig) {
+  const resolved = {};
+  for (const serverName of agentMcpServerNames) {
+    const server = mcpServersConfig.servers[serverName];
+    if (!server) {
+      throw new Error(`Unknown MCP server in agent configuration: ${serverName}`);
+    }
+    resolved[serverName] = server;
+  }
+  return resolved;
 }
 function createErrorResult(agentId, message, runId) {
   return {
@@ -1899,6 +2225,7 @@ function createServer(deps) {
   const delegateTask = createDelegateTaskExecutor({
     agentsConfig: deps.agentsConfig,
     env: deps.env,
+    mcpServersConfig: deps.mcpServersConfig,
     mcpManager: deps.mcpManager
   });
   const ensembleTask = createEnsembleTaskExecutor({
@@ -1952,6 +2279,7 @@ async function main() {
   const server = createServer({
     env,
     agentsConfig,
+    mcpServersConfig,
     mcpManager
   });
   const transport = new StdioServerTransport();

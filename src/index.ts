@@ -25,6 +25,7 @@ async function main(): Promise<void> {
   const server = createServer({
     env,
     agentsConfig,
+    mcpServersConfig,
     mcpManager,
   });
 
