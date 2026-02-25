@@ -36,6 +36,8 @@ export function createServer(deps: CreateServerDeps): McpServer {
   const ensembleTask = createEnsembleTaskExecutor({
     delegateTask,
     maxParallelAgents: deps.env.MAX_PARALLEL_AGENTS,
+    retryEnabled: deps.env.ENSEMBLE_RETRY_ENABLED,
+    retryMaxAttempts: deps.env.ENSEMBLE_RETRY_MAX_ATTEMPTS,
   });
 
   const pipelineTask = createPipelineTaskExecutor({

@@ -1,8 +1,13 @@
 import type { AgentRunResult } from "../agent/runtime.js";
 import type { DelegateTaskFn } from "./delegate.js";
 
+export interface EnsembleAgentRunResult extends AgentRunResult {
+  attempts: number;
+  retried: boolean;
+}
+
 export interface EnsembleResult {
-  individual_results: AgentRunResult[];
+  individual_results: EnsembleAgentRunResult[];
   synthesis: string;
   total_tokens: { input: number; output: number };
   synthesis_agent_id?: string;
@@ -19,14 +24,40 @@ export interface EnsembleTaskInput {
 export interface EnsembleTaskDeps {
   delegateTask: DelegateTaskFn;
   maxParallelAgents: number;
+  retryEnabled?: boolean;
+  retryMaxAttempts?: number;
 }
 
 export function createEnsembleTaskExecutor(deps: EnsembleTaskDeps) {
   return async function ensembleTask(input: EnsembleTaskInput): Promise<EnsembleResult> {
+    const retryEnabled = deps.retryEnabled ?? true;
+    const retryMaxAttempts = Math.max(1, deps.retryMaxAttempts ?? 2);
+
     const individualResults = await mapWithConcurrency(
       input.agentIds,
       Math.max(1, deps.maxParallelAgents),
-      async (agentId) => deps.delegateTask(agentId, input.task),
+      async (agentId) => {
+        let attempts = 0;
+        let result: AgentRunResult;
+        const accumulatedTokens = { input: 0, output: 0 };
+
+        while (true) {
+          attempts += 1;
+          result = await deps.delegateTask(agentId, input.task);
+          accumulatedTokens.input += result.total_tokens.input;
+          accumulatedTokens.output += result.total_tokens.output;
+          if (!retryEnabled || attempts >= retryMaxAttempts || !shouldRetryAgentResult(result)) {
+            break;
+          }
+        }
+
+        return {
+          ...result,
+          total_tokens: accumulatedTokens,
+          attempts,
+          retried: attempts > 1,
+        };
+      },
     );
 
     let synthesis = "";
@@ -100,4 +131,44 @@ function sumTokens(results: AgentRunResult[]): { input: number; output: number }
     },
     { input: 0, output: 0 },
   );
+}
+
+function shouldRetryAgentResult(result: AgentRunResult): boolean {
+  if (!result.error) {
+    return false;
+  }
+
+  return isRetryableAgentError(result.error);
+}
+
+function isRetryableAgentError(errorMessage: string): boolean {
+  const normalized = errorMessage.toLowerCase();
+
+  if (normalized.includes("execution aborted")) {
+    return false;
+  }
+
+  if (
+    normalized.includes("timed out")
+    || normalized.includes("network")
+    || normalized.includes("socket")
+  ) {
+    return true;
+  }
+
+  const statusMatch = normalized.match(/\bhttp\s+(\d{3})\b/i);
+  if (!statusMatch) {
+    return false;
+  }
+
+  const statusCode = Number(statusMatch[1]);
+  if (Number.isNaN(statusCode)) {
+    return false;
+  }
+
+  if (statusCode >= 500 && statusCode <= 599) {
+    return true;
+  }
+
+  return statusCode === 408 || statusCode === 409 || statusCode === 425 || statusCode === 429;
 }

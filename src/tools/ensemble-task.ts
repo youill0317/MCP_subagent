@@ -49,6 +49,8 @@ export function registerEnsembleTaskTool(server: McpServer, deps: RegisterEnsemb
           duration_ms: item.duration_ms,
           stop_reason: item.stop_reason,
           retries: item.retries ?? 0,
+          attempts: item.attempts,
+          retried: item.retried,
           iterations: item.iterations,
           tool_calls_made: item.tool_calls_made,
           tokens: {

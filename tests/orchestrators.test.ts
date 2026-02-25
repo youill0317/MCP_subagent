@@ -58,6 +58,146 @@ test("ensemble aggregates results and synthesis tokens", async () => {
   assert.equal(result.total_tokens.input, 11);
   assert.equal(result.total_tokens.output, 5);
   assert.equal(calls.length, 3);
+  assert.equal(result.individual_results[0]?.attempts, 1);
+  assert.equal(result.individual_results[0]?.retried, false);
+});
+
+test("ensemble retries timeout failure once and keeps successful retry output", async () => {
+  const attemptsByAgent: Record<string, number> = {};
+
+  const delegateTask = async (agentId: string, task: string, context?: string): Promise<AgentRunResult> => {
+    if (context && context.includes("###")) {
+      return makeResult({
+        agent_id: agentId,
+        final_response: "synthesized",
+        total_tokens: { input: 2, output: 1 },
+      });
+    }
+
+    attemptsByAgent[agentId] = (attemptsByAgent[agentId] ?? 0) + 1;
+
+    if (agentId === "beta" && attemptsByAgent[agentId] === 1) {
+      return makeResult({
+        agent_id: agentId,
+        final_response: "",
+        total_tokens: { input: 3, output: 2 },
+        error: "Agent timed out after 120000 ms",
+      });
+    }
+
+    return makeResult({
+      agent_id: agentId,
+      final_response: `${agentId}-answer`,
+      total_tokens: { input: 1, output: 1 },
+    });
+  };
+
+  const ensembleTask = createEnsembleTaskExecutor({
+    delegateTask,
+    maxParallelAgents: 2,
+    retryEnabled: true,
+    retryMaxAttempts: 2,
+  });
+
+  const result = await ensembleTask({
+    agentIds: ["alpha", "beta"],
+    task: "analyze",
+    synthesize: true,
+  });
+
+  assert.equal(result.individual_results.length, 2);
+  assert.equal(result.individual_results.find((item) => item.agent_id === "beta")?.attempts, 2);
+  assert.equal(result.individual_results.find((item) => item.agent_id === "beta")?.retried, true);
+  assert.equal(result.individual_results.find((item) => item.agent_id === "beta")?.error, undefined);
+  assert.deepEqual(result.individual_results.find((item) => item.agent_id === "beta")?.total_tokens, {
+    input: 4,
+    output: 3,
+  });
+  assert.deepEqual(result.total_tokens, {
+    input: 7,
+    output: 5,
+  });
+});
+
+test("ensemble does not retry non-retryable agent error", async () => {
+  let alphaCalls = 0;
+
+  const delegateTask = async (agentId: string): Promise<AgentRunResult> => {
+    if (agentId === "alpha") {
+      alphaCalls += 1;
+      return makeResult({
+        agent_id: agentId,
+        final_response: "",
+        error: "Unknown agent_id: alpha",
+      });
+    }
+
+    return makeResult({
+      agent_id: agentId,
+      final_response: "ok",
+    });
+  };
+
+  const ensembleTask = createEnsembleTaskExecutor({
+    delegateTask,
+    maxParallelAgents: 2,
+    retryEnabled: true,
+    retryMaxAttempts: 2,
+  });
+
+  const result = await ensembleTask({
+    agentIds: ["alpha", "beta"],
+    task: "analyze",
+    synthesize: false,
+  });
+
+  const alpha = result.individual_results.find((item) => item.agent_id === "alpha");
+  assert.equal(alphaCalls, 1);
+  assert.equal(alpha?.attempts, 1);
+  assert.equal(alpha?.retried, false);
+});
+
+test("ensemble retries HTTP 409 once", async () => {
+  const attemptsByAgent: Record<string, number> = {};
+
+  const delegateTask = async (agentId: string): Promise<AgentRunResult> => {
+    attemptsByAgent[agentId] = (attemptsByAgent[agentId] ?? 0) + 1;
+
+    if (agentId === "beta" && attemptsByAgent[agentId] === 1) {
+      return makeResult({
+        agent_id: agentId,
+        final_response: "",
+        total_tokens: { input: 2, output: 1 },
+        error: "HTTP 409 Conflict",
+      });
+    }
+
+    return makeResult({
+      agent_id: agentId,
+      final_response: `${agentId}-answer`,
+      total_tokens: agentId === "beta" ? { input: 4, output: 2 } : { input: 1, output: 1 },
+    });
+  };
+
+  const ensembleTask = createEnsembleTaskExecutor({
+    delegateTask,
+    maxParallelAgents: 2,
+    retryEnabled: true,
+    retryMaxAttempts: 2,
+  });
+
+  const result = await ensembleTask({
+    agentIds: ["alpha", "beta"],
+    task: "analyze",
+    synthesize: false,
+  });
+
+  const beta = result.individual_results.find((item) => item.agent_id === "beta");
+  assert.equal(beta?.attempts, 2);
+  assert.equal(beta?.retried, true);
+  assert.equal(beta?.error, undefined);
+  assert.deepEqual(beta?.total_tokens, { input: 6, output: 3 });
+  assert.deepEqual(result.total_tokens, { input: 7, output: 4 });
 });
 
 test("debate runs multiple rounds with shared context and moderator synthesis", async () => {

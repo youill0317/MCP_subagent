@@ -140,6 +140,25 @@ var BooleanEnvSchema = z2.preprocess((value) => {
   }
   return value;
 }, z2.boolean());
+var OptionalBooleanEnvSchema = z2.preprocess((value) => {
+  if (value === void 0) {
+    return void 0;
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value !== "string") {
+    return value;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") {
+    return true;
+  }
+  if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") {
+    return false;
+  }
+  return value;
+}, z2.boolean().optional());
 var EnvSchema = z2.object({
   OPENAI_API_KEY: z2.string().trim().optional(),
   ANTHROPIC_API_KEY: z2.string().trim().optional(),
@@ -152,11 +171,17 @@ var EnvSchema = z2.object({
   ANTHROPIC_BASE_URL: z2.string().trim().optional(),
   GOOGLE_BASE_URL: z2.string().trim().optional(),
   CUSTOM_BASE_URL: z2.string().trim().optional(),
+  OPENROUTER_PROVIDER_ORDER: z2.string().trim().optional(),
+  OPENROUTER_ALLOW_FALLBACKS: OptionalBooleanEnvSchema,
+  OPENROUTER_HTTP_REFERER: z2.string().trim().optional(),
+  OPENROUTER_X_TITLE: z2.string().trim().optional(),
   DEFAULT_PROVIDER: z2.enum(PROVIDERS).default("anthropic"),
   DEFAULT_MODEL: z2.string().trim().min(1).default("claude-sonnet-4-20250514"),
   MAX_AGENT_ITERATIONS: z2.coerce.number().int().positive().default(15),
   MAX_PARALLEL_AGENTS: z2.coerce.number().int().min(1).max(20).default(5),
-  AGENT_TIMEOUT_MS: z2.coerce.number().int().min(1e3).default(12e4),
+  AGENT_TIMEOUT_MS: z2.coerce.number().int().min(1e3).default(3e5),
+  ENSEMBLE_RETRY_ENABLED: BooleanEnvSchema.default(true),
+  ENSEMBLE_RETRY_MAX_ATTEMPTS: z2.coerce.number().int().min(1).max(5).default(2),
   STRICT_CONFIG_VALIDATION: BooleanEnvSchema.default(true),
   RATE_LIMIT_CAPACITY: z2.coerce.number().min(1).default(10),
   RATE_LIMIT_REFILL_PER_SECOND: z2.coerce.number().positive().default(5)
@@ -180,11 +205,17 @@ function loadEnv(envPath = path2.resolve(process.cwd(), ".env")) {
     ANTHROPIC_BASE_URL: normalizeBaseUrl(parsed.ANTHROPIC_BASE_URL, DEFAULT_ANTHROPIC_BASE_URL),
     GOOGLE_BASE_URL: normalizeBaseUrl(parsed.GOOGLE_BASE_URL, DEFAULT_GOOGLE_BASE_URL),
     CUSTOM_BASE_URL: normalizeBaseUrl(parsed.CUSTOM_BASE_URL, DEFAULT_CUSTOM_BASE_URL),
+    OPENROUTER_PROVIDER_ORDER: parseCommaSeparatedList(parsed.OPENROUTER_PROVIDER_ORDER),
+    OPENROUTER_ALLOW_FALLBACKS: parsed.OPENROUTER_ALLOW_FALLBACKS,
+    OPENROUTER_HTTP_REFERER: normalizeOptional(parsed.OPENROUTER_HTTP_REFERER),
+    OPENROUTER_X_TITLE: normalizeOptional(parsed.OPENROUTER_X_TITLE),
     DEFAULT_PROVIDER: parsed.DEFAULT_PROVIDER,
     DEFAULT_MODEL: parsed.DEFAULT_MODEL,
     MAX_AGENT_ITERATIONS: parsed.MAX_AGENT_ITERATIONS,
     MAX_PARALLEL_AGENTS: parsed.MAX_PARALLEL_AGENTS,
     AGENT_TIMEOUT_MS: parsed.AGENT_TIMEOUT_MS,
+    ENSEMBLE_RETRY_ENABLED: parsed.ENSEMBLE_RETRY_ENABLED,
+    ENSEMBLE_RETRY_MAX_ATTEMPTS: parsed.ENSEMBLE_RETRY_MAX_ATTEMPTS,
     STRICT_CONFIG_VALIDATION: parsed.STRICT_CONFIG_VALIDATION,
     RATE_LIMIT_CAPACITY: parsed.RATE_LIMIT_CAPACITY,
     RATE_LIMIT_REFILL_PER_SECOND: parsed.RATE_LIMIT_REFILL_PER_SECOND
@@ -248,6 +279,23 @@ function normalizeBaseValue(value, fallback) {
     return fallback;
   }
   return trimmed;
+}
+function parseCommaSeparatedList(value) {
+  if (!value) {
+    return void 0;
+  }
+  const deduped = /* @__PURE__ */ new Set();
+  for (const rawItem of value.split(",")) {
+    const item = rawItem.trim();
+    if (!item) {
+      continue;
+    }
+    deduped.add(item);
+  }
+  if (deduped.size === 0) {
+    return void 0;
+  }
+  return [...deduped];
 }
 
 // src/config/mcp-servers.ts
@@ -447,10 +495,7 @@ var MCPClientManager = class {
       command: config.command,
       args: config.args,
       ...config.cwd ? { cwd: config.cwd } : {},
-      env: {
-        ...process.env,
-        ...config.env
-      }
+      env: toStringEnv(process.env, config.env)
     });
     await client.connect(transport);
     const toolList = await client.listTools();
@@ -572,6 +617,18 @@ function extractToolResultText(result) {
     return text;
   }
   return JSON.stringify(content);
+}
+function toStringEnv(baseEnv, overrides) {
+  const env = {};
+  for (const [key, value] of Object.entries(baseEnv)) {
+    if (typeof value === "string") {
+      env[key] = value;
+    }
+  }
+  for (const [key, value] of Object.entries(overrides)) {
+    env[key] = value;
+  }
+  return env;
 }
 
 // src/server.ts
@@ -948,12 +1005,14 @@ function sleepWithAbort(ms, signal) {
 
 // src/llm/openai-client.ts
 var OpenAIClient = class {
-  constructor(apiKey, baseUrl) {
+  constructor(apiKey, baseUrl, options) {
     this.apiKey = apiKey;
     this.baseUrl = stripTrailingSlash(baseUrl);
+    this.options = options;
   }
   provider = "openai";
   baseUrl;
+  options;
   async chat(request) {
     const body = {
       model: request.model,
@@ -966,12 +1025,25 @@ var OpenAIClient = class {
     if (request.tools && request.tools.length > 0) {
       body.tools = request.tools.map(toOpenAIToolDefinition);
     }
+    const headers = {
+      Authorization: `Bearer ${this.apiKey}`
+    };
+    if (isOpenRouterBaseUrl(this.baseUrl)) {
+      const provider = toOpenRouterProviderConfig(this.options);
+      if (provider) {
+        body.provider = provider;
+      }
+      if (this.options?.openrouterHttpReferer) {
+        headers["HTTP-Referer"] = this.options.openrouterHttpReferer;
+      }
+      if (this.options?.openrouterXTitle) {
+        headers["X-Title"] = this.options.openrouterXTitle;
+      }
+    }
     const response = await postJsonWithRetry(
       `${this.baseUrl}/chat/completions`,
       {
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`
-        },
+        headers,
         body
       },
       {
@@ -1086,6 +1158,31 @@ function normalizeAssistantText(content) {
 }
 function stripTrailingSlash(value) {
   return value.replace(/\/+$/g, "");
+}
+function isOpenRouterBaseUrl(baseUrl) {
+  try {
+    const parsed = new URL(baseUrl);
+    const host = parsed.hostname.toLowerCase();
+    return host === "openrouter.ai" || host.endsWith(".openrouter.ai");
+  } catch {
+    return false;
+  }
+}
+function toOpenRouterProviderConfig(options) {
+  if (!options) {
+    return void 0;
+  }
+  const provider = {};
+  if (options.openrouterProviderOrder && options.openrouterProviderOrder.length > 0) {
+    provider.order = options.openrouterProviderOrder;
+  }
+  if (typeof options.openrouterAllowFallbacks === "boolean") {
+    provider.allow_fallbacks = options.openrouterAllowFallbacks;
+  }
+  if (!provider.order && typeof provider.allow_fallbacks !== "boolean") {
+    return void 0;
+  }
+  return provider;
 }
 
 // src/llm/anthropic-client.ts
@@ -1611,7 +1708,7 @@ function createLLMClient(provider, apiKey, baseUrls, options = {}) {
       if (!apiKey) {
         throw new Error("custom API key is not configured");
       }
-      return new OpenAIClient(apiKey, baseUrls.custom);
+      return new OpenAIClient(apiKey, baseUrls.custom, options.custom);
     case "codex":
       if (!options.codex) {
         throw new Error("codex options are required");
@@ -1712,6 +1809,12 @@ function createDelegateTaskExecutor(deps) {
           cliPath: deps.env.CODEX_CLI_PATH,
           mcpServers: resolveAgentMcpServers(agentConfig.mcp_servers, deps.mcpServersConfig),
           cwd: process.cwd()
+        },
+        custom: {
+          openrouterProviderOrder: deps.env.OPENROUTER_PROVIDER_ORDER,
+          openrouterAllowFallbacks: deps.env.OPENROUTER_ALLOW_FALLBACKS,
+          openrouterHttpReferer: deps.env.OPENROUTER_HTTP_REFERER,
+          openrouterXTitle: deps.env.OPENROUTER_X_TITLE
         }
       });
       const abortController = new AbortController();
@@ -1909,10 +2012,31 @@ async function mapWithConcurrency(items, concurrency, worker) {
 // src/orchestrator/ensemble.ts
 function createEnsembleTaskExecutor(deps) {
   return async function ensembleTask(input) {
+    const retryEnabled = deps.retryEnabled ?? true;
+    const retryMaxAttempts = Math.max(1, deps.retryMaxAttempts ?? 2);
     const individualResults = await mapWithConcurrency2(
       input.agentIds,
       Math.max(1, deps.maxParallelAgents),
-      async (agentId) => deps.delegateTask(agentId, input.task)
+      async (agentId) => {
+        let attempts = 0;
+        let result;
+        const accumulatedTokens = { input: 0, output: 0 };
+        while (true) {
+          attempts += 1;
+          result = await deps.delegateTask(agentId, input.task);
+          accumulatedTokens.input += result.total_tokens.input;
+          accumulatedTokens.output += result.total_tokens.output;
+          if (!retryEnabled || attempts >= retryMaxAttempts || !shouldRetryAgentResult(result)) {
+            break;
+          }
+        }
+        return {
+          ...result,
+          total_tokens: accumulatedTokens,
+          attempts,
+          retried: attempts > 1
+        };
+      }
     );
     let synthesis = "";
     let synthesisAgentId;
@@ -1971,6 +2095,33 @@ function sumTokens(results) {
     },
     { input: 0, output: 0 }
   );
+}
+function shouldRetryAgentResult(result) {
+  if (!result.error) {
+    return false;
+  }
+  return isRetryableAgentError(result.error);
+}
+function isRetryableAgentError(errorMessage) {
+  const normalized = errorMessage.toLowerCase();
+  if (normalized.includes("execution aborted")) {
+    return false;
+  }
+  if (normalized.includes("timed out") || normalized.includes("network") || normalized.includes("socket")) {
+    return true;
+  }
+  const statusMatch = normalized.match(/\bhttp\s+(\d{3})\b/i);
+  if (!statusMatch) {
+    return false;
+  }
+  const statusCode = Number(statusMatch[1]);
+  if (Number.isNaN(statusCode)) {
+    return false;
+  }
+  if (statusCode >= 500 && statusCode <= 599) {
+    return true;
+  }
+  return statusCode === 408 || statusCode === 409 || statusCode === 425 || statusCode === 429;
 }
 
 // src/orchestrator/pipeline.ts
@@ -2119,6 +2270,8 @@ function registerEnsembleTaskTool(server, deps) {
           duration_ms: item.duration_ms,
           stop_reason: item.stop_reason,
           retries: item.retries ?? 0,
+          attempts: item.attempts,
+          retried: item.retried,
           iterations: item.iterations,
           tool_calls_made: item.tool_calls_made,
           tokens: {
@@ -2230,7 +2383,9 @@ function createServer(deps) {
   });
   const ensembleTask = createEnsembleTaskExecutor({
     delegateTask,
-    maxParallelAgents: deps.env.MAX_PARALLEL_AGENTS
+    maxParallelAgents: deps.env.MAX_PARALLEL_AGENTS,
+    retryEnabled: deps.env.ENSEMBLE_RETRY_ENABLED,
+    retryMaxAttempts: deps.env.ENSEMBLE_RETRY_MAX_ATTEMPTS
   });
   const pipelineTask = createPipelineTaskExecutor({
     delegateTask

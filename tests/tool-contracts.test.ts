@@ -168,17 +168,25 @@ test("ensemble_task tool returns partial_success when synthesis or members fail"
     availableAgentIds: ["creative", "critical"],
     ensembleTask: async () => ({
       individual_results: [
-        makeResult({
-          agent_id: "creative",
-          final_response: "idea",
-          total_tokens: { input: 1, output: 1 },
-        }),
-        makeResult({
-          agent_id: "critical",
-          final_response: "",
-          error: "no output",
-          total_tokens: { input: 1, output: 0 },
-        }),
+        {
+          ...makeResult({
+            agent_id: "creative",
+            final_response: "idea",
+            total_tokens: { input: 1, output: 1 },
+          }),
+          attempts: 1,
+          retried: false,
+        },
+        {
+          ...makeResult({
+            agent_id: "critical",
+            final_response: "",
+            error: "no output",
+            total_tokens: { input: 1, output: 0 },
+          }),
+          attempts: 2,
+          retried: true,
+        },
       ],
       synthesis: "",
       total_tokens: { input: 2, output: 1 },
@@ -200,8 +208,10 @@ test("ensemble_task tool returns partial_success when synthesis or members fail"
 
   assert.equal(payload.status, "partial_success");
   assert.equal(payload.synthesis_error, "synthesis failed");
-  const individual = payload.individual_results as Array<{ error?: string }>;
+  const individual = payload.individual_results as Array<{ error?: string; metadata: { attempts: number; retried: boolean } }>;
   assert.equal(individual[1]?.error, "no output");
+  assert.equal(individual[0]?.metadata.attempts, 1);
+  assert.equal(individual[1]?.metadata.retried, true);
 });
 
 test("debate_task tool returns rounds metadata and partial_success error", async () => {
