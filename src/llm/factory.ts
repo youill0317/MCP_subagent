@@ -13,8 +13,16 @@ export interface LLMBaseUrls {
   custom: string;
 }
 
+export interface CustomClientOptions {
+  openrouterProviderOrder?: string[];
+  openrouterAllowFallbacks?: boolean;
+  openrouterHttpReferer?: string;
+  openrouterXTitle?: string;
+}
+
 export interface CreateLLMClientOptions {
   codex?: CodexCliClientOptions;
+  custom?: CustomClientOptions;
 }
 
 export function createLLMClient(
@@ -43,7 +51,7 @@ export function createLLMClient(
       if (!apiKey) {
         throw new Error("custom API key is not configured");
       }
-      return new OpenAIClient(apiKey, baseUrls.custom);
+      return new OpenAIClient(apiKey, baseUrls.custom, options.custom);
     case "codex":
       if (!options.codex) {
         throw new Error("codex options are required");

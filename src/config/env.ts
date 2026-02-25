@@ -25,6 +25,10 @@ export interface AppEnv {
   ANTHROPIC_BASE_URL: string;
   GOOGLE_BASE_URL: string;
   CUSTOM_BASE_URL: string;
+  OPENROUTER_PROVIDER_ORDER?: string[];
+  OPENROUTER_ALLOW_FALLBACKS?: boolean;
+  OPENROUTER_HTTP_REFERER?: string;
+  OPENROUTER_X_TITLE?: string;
   DEFAULT_PROVIDER: LLMProvider;
   DEFAULT_MODEL: string;
   MAX_AGENT_ITERATIONS: number;
@@ -54,6 +58,26 @@ const BooleanEnvSchema = z.preprocess((value) => {
   return value;
 }, z.boolean());
 
+const OptionalBooleanEnvSchema = z.preprocess((value) => {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value !== "string") {
+    return value;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") {
+    return true;
+  }
+  if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") {
+    return false;
+  }
+  return value;
+}, z.boolean().optional());
+
 const EnvSchema = z.object({
   OPENAI_API_KEY: z.string().trim().optional(),
   ANTHROPIC_API_KEY: z.string().trim().optional(),
@@ -66,6 +90,10 @@ const EnvSchema = z.object({
   ANTHROPIC_BASE_URL: z.string().trim().optional(),
   GOOGLE_BASE_URL: z.string().trim().optional(),
   CUSTOM_BASE_URL: z.string().trim().optional(),
+  OPENROUTER_PROVIDER_ORDER: z.string().trim().optional(),
+  OPENROUTER_ALLOW_FALLBACKS: OptionalBooleanEnvSchema,
+  OPENROUTER_HTTP_REFERER: z.string().trim().optional(),
+  OPENROUTER_X_TITLE: z.string().trim().optional(),
   DEFAULT_PROVIDER: z.enum(PROVIDERS).default("anthropic"),
   DEFAULT_MODEL: z.string().trim().min(1).default("claude-sonnet-4-20250514"),
   MAX_AGENT_ITERATIONS: z.coerce.number().int().positive().default(15),
@@ -98,6 +126,10 @@ export function loadEnv(envPath = path.resolve(process.cwd(), ".env")): AppEnv {
     ANTHROPIC_BASE_URL: normalizeBaseUrl(parsed.ANTHROPIC_BASE_URL, DEFAULT_ANTHROPIC_BASE_URL),
     GOOGLE_BASE_URL: normalizeBaseUrl(parsed.GOOGLE_BASE_URL, DEFAULT_GOOGLE_BASE_URL),
     CUSTOM_BASE_URL: normalizeBaseUrl(parsed.CUSTOM_BASE_URL, DEFAULT_CUSTOM_BASE_URL),
+    OPENROUTER_PROVIDER_ORDER: parseCommaSeparatedList(parsed.OPENROUTER_PROVIDER_ORDER),
+    OPENROUTER_ALLOW_FALLBACKS: parsed.OPENROUTER_ALLOW_FALLBACKS,
+    OPENROUTER_HTTP_REFERER: normalizeOptional(parsed.OPENROUTER_HTTP_REFERER),
+    OPENROUTER_X_TITLE: normalizeOptional(parsed.OPENROUTER_X_TITLE),
     DEFAULT_PROVIDER: parsed.DEFAULT_PROVIDER,
     DEFAULT_MODEL: parsed.DEFAULT_MODEL,
     MAX_AGENT_ITERATIONS: parsed.MAX_AGENT_ITERATIONS,
@@ -179,4 +211,25 @@ function normalizeBaseValue(value: string | undefined, fallback: string): string
   }
 
   return trimmed;
+}
+
+function parseCommaSeparatedList(value: string | undefined): string[] | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const deduped = new Set<string>();
+  for (const rawItem of value.split(",")) {
+    const item = rawItem.trim();
+    if (!item) {
+      continue;
+    }
+    deduped.add(item);
+  }
+
+  if (deduped.size === 0) {
+    return undefined;
+  }
+
+  return [...deduped];
 }

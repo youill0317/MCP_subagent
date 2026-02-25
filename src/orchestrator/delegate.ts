@@ -47,6 +47,12 @@ export function createDelegateTaskExecutor(deps: DelegateTaskDeps): DelegateTask
           mcpServers: resolveAgentMcpServers(agentConfig.mcp_servers, deps.mcpServersConfig),
           cwd: process.cwd(),
         },
+        custom: {
+          openrouterProviderOrder: deps.env.OPENROUTER_PROVIDER_ORDER,
+          openrouterAllowFallbacks: deps.env.OPENROUTER_ALLOW_FALLBACKS,
+          openrouterHttpReferer: deps.env.OPENROUTER_HTTP_REFERER,
+          openrouterXTitle: deps.env.OPENROUTER_X_TITLE,
+        },
       });
       const abortController = new AbortController();
       const execution = runAgent(agentConfig, task, context, llmClient, deps.mcpManager, {

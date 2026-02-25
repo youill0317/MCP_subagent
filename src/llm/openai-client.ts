@@ -9,6 +9,18 @@ import type {
   ToolResult,
 } from "./types.js";
 
+interface OpenRouterProviderConfig {
+  order?: string[];
+  allow_fallbacks?: boolean;
+}
+
+export interface OpenAIClientOptions {
+  openrouterProviderOrder?: string[];
+  openrouterAllowFallbacks?: boolean;
+  openrouterHttpReferer?: string;
+  openrouterXTitle?: string;
+}
+
 interface OpenAICompletionResponse {
   choices?: Array<{
     finish_reason?: string | null;
@@ -32,12 +44,15 @@ interface OpenAICompletionResponse {
 export class OpenAIClient implements LLMClient {
   readonly provider = "openai";
   private readonly baseUrl: string;
+  private readonly options?: OpenAIClientOptions;
 
   constructor(
     private readonly apiKey: string,
     baseUrl: string,
+    options?: OpenAIClientOptions,
   ) {
     this.baseUrl = stripTrailingSlash(baseUrl);
+    this.options = options;
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
@@ -55,12 +70,27 @@ export class OpenAIClient implements LLMClient {
       body.tools = request.tools.map(toOpenAIToolDefinition);
     }
 
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${this.apiKey}`,
+    };
+    if (isOpenRouterBaseUrl(this.baseUrl)) {
+      const provider = toOpenRouterProviderConfig(this.options);
+      if (provider) {
+        body.provider = provider;
+      }
+
+      if (this.options?.openrouterHttpReferer) {
+        headers["HTTP-Referer"] = this.options.openrouterHttpReferer;
+      }
+      if (this.options?.openrouterXTitle) {
+        headers["X-Title"] = this.options.openrouterXTitle;
+      }
+    }
+
     const response = await postJsonWithRetry<OpenAICompletionResponse>(
       `${this.baseUrl}/chat/completions`,
       {
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-        },
+        headers,
         body,
       },
       {
@@ -214,4 +244,36 @@ function normalizeAssistantText(content: Message["content"]): string {
 
 function stripTrailingSlash(value: string): string {
   return value.replace(/\/+$/g, "");
+}
+
+function isOpenRouterBaseUrl(baseUrl: string): boolean {
+  try {
+    const parsed = new URL(baseUrl);
+    const host = parsed.hostname.toLowerCase();
+    return host === "openrouter.ai" || host.endsWith(".openrouter.ai");
+  } catch {
+    return false;
+  }
+}
+
+function toOpenRouterProviderConfig(options: OpenAIClientOptions | undefined): OpenRouterProviderConfig | undefined {
+  if (!options) {
+    return undefined;
+  }
+
+  const provider: OpenRouterProviderConfig = {};
+
+  if (options.openrouterProviderOrder && options.openrouterProviderOrder.length > 0) {
+    provider.order = options.openrouterProviderOrder;
+  }
+
+  if (typeof options.openrouterAllowFallbacks === "boolean") {
+    provider.allow_fallbacks = options.openrouterAllowFallbacks;
+  }
+
+  if (!provider.order && typeof provider.allow_fallbacks !== "boolean") {
+    return undefined;
+  }
+
+  return provider;
 }
