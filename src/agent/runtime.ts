@@ -122,41 +122,37 @@ export async function runAgent(
 
     conversation.addAssistant(response.content, response.tool_calls);
 
-    const toolResults: ToolResult[] = [];
-    for (const toolCall of response.tool_calls) {
-      if (options.signal?.aborted) {
-        return createResult({
-          agentConfig,
-          tokenCounter,
-          iterations,
-          toolCallsMade,
-          startedAt,
-          options,
-          retries,
-          error: "Execution aborted",
-          stopReason: "aborted",
-        });
-      }
+    const toolResults: ToolResult[] = await Promise.all(
+      response.tool_calls.map(async (toolCall) => {
+        if (options.signal?.aborted) {
+          return {
+            tool_call_id: toolCall.id,
+            tool_name: toolCall.name,
+            result: "Error: Execution aborted",
+            is_error: true,
+          };
+        }
 
-      toolCallsMade += 1;
-      try {
-        const result = await mcpManager.callTool(toolCall.name, toolCall.arguments, {
-          signal: options.signal,
-        });
-        toolResults.push({
-          tool_call_id: toolCall.id,
-          tool_name: toolCall.name,
-          result,
-        });
-      } catch (error) {
-        toolResults.push({
-          tool_call_id: toolCall.id,
-          tool_name: toolCall.name,
-          result: `Error: ${error instanceof Error ? error.message : String(error)}`,
-          is_error: true,
-        });
-      }
-    }
+        toolCallsMade += 1;
+        try {
+          const result = await mcpManager.callTool(toolCall.name, toolCall.arguments, {
+            signal: options.signal,
+          });
+          return {
+            tool_call_id: toolCall.id,
+            tool_name: toolCall.name,
+            result,
+          };
+        } catch (error) {
+          return {
+            tool_call_id: toolCall.id,
+            tool_name: toolCall.name,
+            result: `Error: ${error instanceof Error ? error.message : String(error)}`,
+            is_error: true,
+          };
+        }
+      }),
+    );
 
     conversation.addToolResults(toolResults);
   }

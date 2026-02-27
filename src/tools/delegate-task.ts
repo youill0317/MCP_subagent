@@ -8,15 +8,26 @@ interface RegisterDelegateTaskToolDeps {
 }
 
 const schema = z.object({
-  agent_id: z.string().describe("Agent ID to delegate the task to"),
-  task: z.string().describe("Task instruction to send to the agent"),
-  context: z.string().optional().describe("Additional context"),
+  agent_id: z.string().describe(
+    "One of the available agent IDs listed in the tool description."
+  ),
+  task: z.string().describe(
+    "A clear, self-contained instruction. The agent only sees this text and context — include all necessary details."
+  ),
+  context: z.string().optional().describe(
+    "Optional background information the agent needs. Pass relevant prior results or data here."
+  ),
 });
 
 export function registerDelegateTaskTool(server: McpServer, deps: RegisterDelegateTaskToolDeps): void {
   const description =
-    "Delegates a single task to a specific sub-agent. " +
-    `Available agents: ${deps.availableAgentIds.join(", ")}`;
+    "[Use when] You need a specific sub-agent to perform a single, focused task. " +
+    "For complex requests, break into sub-tasks and call MULTIPLE TIMES IN PARALLEL. " +
+    `Available agents: ${deps.availableAgentIds.join(", ")}. ` +
+    "[Input rules] " +
+    "agent_id: must be one of the available agents listed above. " +
+    "task: a clear, self-contained instruction — the agent only sees this and context. " +
+    "context (optional): background info or prior results the agent needs.";
 
   server.tool("delegate_task", description, schema.shape, async (args) => {
     const result = await deps.delegateTask(args.agent_id, args.task, args.context);

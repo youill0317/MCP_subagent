@@ -4,11 +4,9 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AgentRunResult } from "../src/agent/runtime.js";
 import type { AgentsConfig } from "../src/config/agents.js";
 import { MCPClientManager } from "../src/mcp-client/manager.js";
-import { registerDebateTaskTool } from "../src/tools/debate-task.js";
 import { registerDelegateTaskTool } from "../src/tools/delegate-task.js";
-import { registerEnsembleTaskTool } from "../src/tools/ensemble-task.js";
+import { registerPerspectivesTaskTool } from "../src/tools/perspectives-task.js";
 import { registerListAgentsTool } from "../src/tools/list-agents.js";
-import { registerPipelineTaskTool } from "../src/tools/pipeline-task.js";
 
 type ToolResponse = {
   content: Array<{ type: string; text: string }>;
@@ -114,149 +112,64 @@ test("delegate_task tool returns success and error payloads with metadata", asyn
   assert.equal(errorPayload.error, "delegate failed");
 });
 
-test("pipeline_task tool returns pipeline status and per-step metadata", async () => {
+test("perspectives_task tool returns 3 perspectives with metadata", async () => {
   const server = new FakeMcpServer();
-  registerPipelineTaskTool(server as unknown as McpServer, {
-    availableAgentIds: ["agent-a", "agent-b"],
-    pipelineTask: async () => ({
-      steps: [
+  registerPerspectivesTaskTool(server as unknown as McpServer, {
+    perspectivesTask: async () => ({
+      perspectives: [
         {
-          step: 1,
-          agent_id: "agent-a",
+          agent_id: "creative",
           result: makeResult({
-            agent_id: "agent-a",
-            final_response: "step1",
-            total_tokens: { input: 1, output: 1 },
-          }),
-        },
-        {
-          step: 2,
-          agent_id: "agent-b",
-          result: makeResult({
-            agent_id: "agent-b",
-            final_response: "",
-            error: "step failed",
-            total_tokens: { input: 1, output: 0 },
-          }),
-        },
-      ],
-      final_output: "",
-      total_tokens: { input: 2, output: 1 },
-      error: "Step 2 failed",
-    }),
-  });
-
-  const tool = getTool(server, "pipeline_task");
-  assert.deepEqual(Object.keys(tool.schema), ["steps"]);
-
-  const payload = parsePayload(
-    await tool.handler({
-      steps: [],
-    }),
-  );
-
-  assert.equal(payload.status, "error");
-  assert.equal(payload.error, "Step 2 failed");
-  const steps = payload.steps as Array<{ metadata: { tokens: { input: number; output: number } } }>;
-  assert.equal(steps.length, 2);
-  assert.equal(steps[1]?.metadata.tokens.output, 0);
-});
-
-test("ensemble_task tool returns partial_success when synthesis or members fail", async () => {
-  const server = new FakeMcpServer();
-  registerEnsembleTaskTool(server as unknown as McpServer, {
-    availableAgentIds: ["creative", "critical"],
-    ensembleTask: async () => ({
-      individual_results: [
-        {
-          ...makeResult({
             agent_id: "creative",
-            final_response: "idea",
-            total_tokens: { input: 1, output: 1 },
+            final_response: "creative idea",
+            total_tokens: { input: 2, output: 1 },
           }),
-          attempts: 1,
-          retried: false,
         },
         {
-          ...makeResult({
+          agent_id: "critical",
+          result: makeResult({
             agent_id: "critical",
             final_response: "",
-            error: "no output",
+            error: "timeout",
             total_tokens: { input: 1, output: 0 },
           }),
-          attempts: 2,
-          retried: true,
         },
-      ],
-      synthesis: "",
-      total_tokens: { input: 2, output: 1 },
-      synthesis_agent_id: "creative",
-      synthesis_error: "synthesis failed",
-    }),
-  });
-
-  const tool = getTool(server, "ensemble_task");
-  assert.deepEqual(Object.keys(tool.schema).sort(), ["agent_ids", "synthesize", "synthesizer_agent_id", "task"]);
-
-  const payload = parsePayload(
-    await tool.handler({
-      agent_ids: ["creative", "critical"],
-      task: "Discuss",
-      synthesize: true,
-    }),
-  );
-
-  assert.equal(payload.status, "partial_success");
-  assert.equal(payload.synthesis_error, "synthesis failed");
-  const individual = payload.individual_results as Array<{ error?: string; metadata: { attempts: number; retried: boolean } }>;
-  assert.equal(individual[1]?.error, "no output");
-  assert.equal(individual[0]?.metadata.attempts, 1);
-  assert.equal(individual[1]?.metadata.retried, true);
-});
-
-test("debate_task tool returns rounds metadata and partial_success error", async () => {
-  const server = new FakeMcpServer();
-  registerDebateTaskTool(server as unknown as McpServer, {
-    availableAgentIds: ["creative", "critical", "logical"],
-    debateTask: async () => ({
-      rounds: [
         {
-          round: 1,
-          responses: [
-            {
-              agent_id: "creative",
-              result: makeResult({
-                agent_id: "creative",
-                final_response: "opinion",
-                total_tokens: { input: 1, output: 1 },
-              }),
-            },
-          ],
+          agent_id: "logical",
+          result: makeResult({
+            agent_id: "logical",
+            final_response: "structured view",
+            total_tokens: { input: 2, output: 1 },
+          }),
         },
       ],
-      conclusion: "final",
-      moderator_agent_id: "logical",
-      total_rounds: 1,
-      total_tokens: { input: 2, output: 2 },
-      error: "Round 1 (creative): issue",
+      total_tokens: { input: 5, output: 2 },
+      error: "critical: timeout",
     }),
   });
 
-  const tool = getTool(server, "debate_task");
-  assert.deepEqual(Object.keys(tool.schema).sort(), ["agent_ids", "moderator_agent_id", "rounds", "task"]);
+  const tool = getTool(server, "perspectives_task");
+  assert.deepEqual(Object.keys(tool.schema).sort(), ["context", "task"]);
 
   const payload = parsePayload(
     await tool.handler({
-      agent_ids: ["creative", "critical"],
-      task: "Debate this",
-      rounds: 1,
+      task: "Analyze topic",
     }),
   );
 
   assert.equal(payload.status, "partial_success");
-  assert.equal(payload.moderator_agent_id, "logical");
-  const rounds = payload.rounds as Array<{ responses: Array<{ metadata: { tokens: { input: number } } }> }>;
-  assert.equal(rounds[0]?.responses[0]?.metadata.tokens.input, 1);
+  assert.equal(payload.error, "critical: timeout");
+  const perspectives = payload.perspectives as Array<{
+    agent_id: string;
+    response: string;
+    error?: string;
+    metadata: { tokens: { input: number; output: number } };
+  }>;
+  assert.equal(perspectives.length, 3);
+  assert.equal(perspectives[0]?.agent_id, "creative");
+  assert.equal(perspectives[0]?.response, "creative idea");
+  assert.equal(perspectives[1]?.error, "timeout");
+  assert.equal(perspectives[2]?.metadata.tokens.input, 2);
 });
 
 test("list_agents tool returns per-agent tool list and server health", async () => {

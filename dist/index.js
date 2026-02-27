@@ -180,8 +180,6 @@ var EnvSchema = z2.object({
   MAX_AGENT_ITERATIONS: z2.coerce.number().int().positive().default(15),
   MAX_PARALLEL_AGENTS: z2.coerce.number().int().min(1).max(20).default(5),
   AGENT_TIMEOUT_MS: z2.coerce.number().int().min(1e3).default(3e5),
-  ENSEMBLE_RETRY_ENABLED: BooleanEnvSchema.default(true),
-  ENSEMBLE_RETRY_MAX_ATTEMPTS: z2.coerce.number().int().min(1).max(5).default(2),
   STRICT_CONFIG_VALIDATION: BooleanEnvSchema.default(true),
   RATE_LIMIT_CAPACITY: z2.coerce.number().min(1).default(10),
   RATE_LIMIT_REFILL_PER_SECOND: z2.coerce.number().positive().default(5)
@@ -214,8 +212,6 @@ function loadEnv(envPath = path2.resolve(process.cwd(), ".env")) {
     MAX_AGENT_ITERATIONS: parsed.MAX_AGENT_ITERATIONS,
     MAX_PARALLEL_AGENTS: parsed.MAX_PARALLEL_AGENTS,
     AGENT_TIMEOUT_MS: parsed.AGENT_TIMEOUT_MS,
-    ENSEMBLE_RETRY_ENABLED: parsed.ENSEMBLE_RETRY_ENABLED,
-    ENSEMBLE_RETRY_MAX_ATTEMPTS: parsed.ENSEMBLE_RETRY_MAX_ATTEMPTS,
     STRICT_CONFIG_VALIDATION: parsed.STRICT_CONFIG_VALIDATION,
     RATE_LIMIT_CAPACITY: parsed.RATE_LIMIT_CAPACITY,
     RATE_LIMIT_REFILL_PER_SECOND: parsed.RATE_LIMIT_REFILL_PER_SECOND
@@ -760,40 +756,36 @@ ${task}` : task;
       });
     }
     conversation.addAssistant(response.content, response.tool_calls);
-    const toolResults = [];
-    for (const toolCall of response.tool_calls) {
-      if (options.signal?.aborted) {
-        return createResult({
-          agentConfig,
-          tokenCounter,
-          iterations,
-          toolCallsMade,
-          startedAt,
-          options,
-          retries,
-          error: "Execution aborted",
-          stopReason: "aborted"
-        });
-      }
-      toolCallsMade += 1;
-      try {
-        const result = await mcpManager.callTool(toolCall.name, toolCall.arguments, {
-          signal: options.signal
-        });
-        toolResults.push({
-          tool_call_id: toolCall.id,
-          tool_name: toolCall.name,
-          result
-        });
-      } catch (error) {
-        toolResults.push({
-          tool_call_id: toolCall.id,
-          tool_name: toolCall.name,
-          result: `Error: ${error instanceof Error ? error.message : String(error)}`,
-          is_error: true
-        });
-      }
-    }
+    const toolResults = await Promise.all(
+      response.tool_calls.map(async (toolCall) => {
+        if (options.signal?.aborted) {
+          return {
+            tool_call_id: toolCall.id,
+            tool_name: toolCall.name,
+            result: "Error: Execution aborted",
+            is_error: true
+          };
+        }
+        toolCallsMade += 1;
+        try {
+          const result = await mcpManager.callTool(toolCall.name, toolCall.arguments, {
+            signal: options.signal
+          });
+          return {
+            tool_call_id: toolCall.id,
+            tool_name: toolCall.name,
+            result
+          };
+        } catch (error) {
+          return {
+            tool_call_id: toolCall.id,
+            tool_name: toolCall.name,
+            result: `Error: ${error instanceof Error ? error.message : String(error)}`,
+            is_error: true
+          };
+        }
+      })
+    );
     conversation.addToolResults(toolResults);
   }
   return createResult({
@@ -1895,328 +1887,73 @@ async function withTimeout(promise, timeoutMs, onTimeout, message) {
   }
 }
 
-// src/orchestrator/debate.ts
-function createDebateTaskExecutor(deps) {
-  return async function debateTask(input) {
-    validateInput(input);
+// src/orchestrator/perspectives.ts
+var PERSPECTIVE_AGENTS = ["creative", "critical", "logical"];
+function createPerspectivesTaskExecutor(deps) {
+  return async function perspectivesTask(input) {
     const totalTokens = { input: 0, output: 0 };
-    const debateRounds = [];
     const errors = [];
-    const moderatorAgentId = resolveModeratorAgentId(input, deps.availableAgentIds);
-    validateModeratorAgentId(moderatorAgentId, deps.availableAgentIds);
-    const maxParallelAgents = Math.max(1, deps.maxParallelAgents);
-    let discussionLog = "";
-    for (let roundNumber = 1; roundNumber <= input.rounds; roundNumber += 1) {
-      const context = roundNumber === 1 ? void 0 : discussionLog;
-      const taskPrompt = roundNumber === 1 ? input.task : [
-        "Continue the discussion. Respond to other participants' points with rebuttals, refinements, or support.",
-        `Topic: ${input.task}`
-      ].join("\n\n");
-      const responses = await mapWithConcurrency(
-        input.agentIds,
-        maxParallelAgents,
-        async (agentId) => {
-          const result = await deps.delegateTask(agentId, taskPrompt, context);
-          totalTokens.input += result.total_tokens.input;
-          totalTokens.output += result.total_tokens.output;
-          if (result.error) {
-            errors.push(`Round ${roundNumber} (${agentId}): ${result.error}`);
-          }
-          return {
-            agent_id: agentId,
-            result
-          };
+    const maxParallel = Math.max(1, deps.maxParallelAgents);
+    const perspectives = await mapWithConcurrency(
+      [...PERSPECTIVE_AGENTS],
+      maxParallel,
+      async (agentId) => {
+        const result = await deps.delegateTask(
+          agentId,
+          input.task,
+          input.context
+        );
+        totalTokens.input += result.total_tokens.input;
+        totalTokens.output += result.total_tokens.output;
+        if (result.error) {
+          errors.push(`${agentId}: ${result.error}`);
         }
-      );
-      debateRounds.push({
-        round: roundNumber,
-        responses
-      });
-      discussionLog += `${formatRound(roundNumber, responses)}
-
-`;
-    }
-    const moderatorResult = await deps.delegateTask(
-      moderatorAgentId,
-      "Synthesize the entire discussion into a clear, actionable conclusion. Include major agreements, disagreements, risks, and recommended next steps.",
-      discussionLog || void 0
+        return { agent_id: agentId, result };
+      }
     );
-    totalTokens.input += moderatorResult.total_tokens.input;
-    totalTokens.output += moderatorResult.total_tokens.output;
-    if (moderatorResult.error) {
-      errors.push(`Moderator (${moderatorAgentId}): ${moderatorResult.error}`);
-    }
     return {
-      rounds: debateRounds,
-      conclusion: moderatorResult.final_response,
-      moderator_agent_id: moderatorAgentId,
-      total_rounds: input.rounds,
+      perspectives,
       total_tokens: totalTokens,
       ...errors.length > 0 ? { error: errors.join(" | ") } : {}
     };
   };
 }
-function validateInput(input) {
-  if (input.agentIds.length < 2 || input.agentIds.length > 5) {
-    throw new Error("agentIds must include between 2 and 5 agents");
-  }
-  if (!Number.isInteger(input.rounds) || input.rounds < 1 || input.rounds > 5) {
-    throw new Error("rounds must be an integer between 1 and 5");
-  }
-}
-function resolveModeratorAgentId(input, availableAgentIds) {
-  if (input.moderatorAgentId) {
-    return input.moderatorAgentId;
-  }
-  if (availableAgentIds?.includes("logical") || input.agentIds.includes("logical")) {
-    return "logical";
-  }
-  return input.agentIds[input.agentIds.length - 1];
-}
-function validateModeratorAgentId(moderatorAgentId, availableAgentIds) {
-  if (!availableAgentIds) {
-    return;
-  }
-  if (availableAgentIds.includes(moderatorAgentId)) {
-    return;
-  }
-  throw new Error(
-    `Unknown moderator_agent_id: ${moderatorAgentId}. Available agents: ${availableAgentIds.join(", ")}`
-  );
-}
-function formatRound(roundNumber, responses) {
-  const sections = [`## Round ${roundNumber}`];
-  for (const item of responses) {
-    sections.push(`### ${item.agent_id}`);
-    sections.push(item.result.final_response || item.result.error || "[no output]");
-  }
-  return sections.join("\n");
-}
 async function mapWithConcurrency(items, concurrency, worker) {
   const results = new Array(items.length);
   let nextIndex = 0;
-  const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (true) {
-      const current = nextIndex;
-      nextIndex += 1;
-      if (current >= items.length) {
-        return;
-      }
-      results[current] = await worker(items[current], current);
-    }
-  });
-  await Promise.all(runners);
-  return results;
-}
-
-// src/orchestrator/ensemble.ts
-function createEnsembleTaskExecutor(deps) {
-  return async function ensembleTask(input) {
-    const retryEnabled = deps.retryEnabled ?? true;
-    const retryMaxAttempts = Math.max(1, deps.retryMaxAttempts ?? 2);
-    const individualResults = await mapWithConcurrency2(
-      input.agentIds,
-      Math.max(1, deps.maxParallelAgents),
-      async (agentId) => {
-        let attempts = 0;
-        let result;
-        const accumulatedTokens = { input: 0, output: 0 };
-        while (true) {
-          attempts += 1;
-          result = await deps.delegateTask(agentId, input.task);
-          accumulatedTokens.input += result.total_tokens.input;
-          accumulatedTokens.output += result.total_tokens.output;
-          if (!retryEnabled || attempts >= retryMaxAttempts || !shouldRetryAgentResult(result)) {
-            break;
-          }
+  const runners = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    async () => {
+      while (true) {
+        const current = nextIndex;
+        nextIndex += 1;
+        if (current >= items.length) {
+          return;
         }
-        return {
-          ...result,
-          total_tokens: accumulatedTokens,
-          attempts,
-          retried: attempts > 1
-        };
+        results[current] = await worker(items[current], current);
       }
-    );
-    let synthesis = "";
-    let synthesisAgentId;
-    let synthesisError;
-    let synthesisTokens = { input: 0, output: 0 };
-    if (input.synthesize) {
-      synthesisAgentId = input.synthesizerAgentId ?? input.agentIds[0];
-      const synthContext = individualResults.map((result) => `### ${result.agent_id}
-${result.final_response || result.error || "[no output]"}`).join("\n\n");
-      const synthResult = await deps.delegateTask(
-        synthesisAgentId,
-        "Synthesize the following results from multiple agents into one unified answer.",
-        synthContext
-      );
-      synthesis = synthResult.final_response;
-      synthesisError = synthResult.error;
-      synthesisTokens = {
-        input: synthResult.total_tokens.input,
-        output: synthResult.total_tokens.output
-      };
     }
-    const totalTokens = sumTokens(individualResults);
-    totalTokens.input += synthesisTokens.input;
-    totalTokens.output += synthesisTokens.output;
-    return {
-      individual_results: individualResults,
-      synthesis,
-      total_tokens: totalTokens,
-      ...synthesisAgentId ? { synthesis_agent_id: synthesisAgentId } : {},
-      ...synthesisError ? { synthesis_error: synthesisError } : {}
-    };
-  };
-}
-async function mapWithConcurrency2(items, concurrency, worker) {
-  const results = new Array(items.length);
-  let nextIndex = 0;
-  const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (true) {
-      const current = nextIndex;
-      nextIndex += 1;
-      if (current >= items.length) {
-        return;
-      }
-      results[current] = await worker(items[current], current);
-    }
-  });
+  );
   await Promise.all(runners);
   return results;
-}
-function sumTokens(results) {
-  return results.reduce(
-    (acc, result) => {
-      acc.input += result.total_tokens.input;
-      acc.output += result.total_tokens.output;
-      return acc;
-    },
-    { input: 0, output: 0 }
-  );
-}
-function shouldRetryAgentResult(result) {
-  if (!result.error) {
-    return false;
-  }
-  return isRetryableAgentError(result.error);
-}
-function isRetryableAgentError(errorMessage) {
-  const normalized = errorMessage.toLowerCase();
-  if (normalized.includes("execution aborted")) {
-    return false;
-  }
-  if (normalized.includes("timed out") || normalized.includes("network") || normalized.includes("socket")) {
-    return true;
-  }
-  const statusMatch = normalized.match(/\bhttp\s+(\d{3})\b/i);
-  if (!statusMatch) {
-    return false;
-  }
-  const statusCode = Number(statusMatch[1]);
-  if (Number.isNaN(statusCode)) {
-    return false;
-  }
-  if (statusCode >= 500 && statusCode <= 599) {
-    return true;
-  }
-  return statusCode === 408 || statusCode === 409 || statusCode === 425 || statusCode === 429;
-}
-
-// src/orchestrator/pipeline.ts
-function createPipelineTaskExecutor(deps) {
-  return async function pipelineTask(steps) {
-    const stepResults = [];
-    const totalTokens = { input: 0, output: 0 };
-    let previousOutput = "";
-    let pipelineError;
-    for (let index = 0; index < steps.length; index += 1) {
-      const step = steps[index];
-      const result = await deps.delegateTask(step.agent_id, step.task, previousOutput || void 0);
-      stepResults.push({
-        step: index + 1,
-        agent_id: step.agent_id,
-        result
-      });
-      totalTokens.input += result.total_tokens.input;
-      totalTokens.output += result.total_tokens.output;
-      previousOutput = result.final_response;
-      if (result.error) {
-        pipelineError = `Step ${index + 1} failed (${step.agent_id}): ${result.error}`;
-        break;
-      }
-    }
-    return {
-      steps: stepResults,
-      final_output: previousOutput,
-      total_tokens: totalTokens,
-      ...pipelineError ? { error: pipelineError } : {}
-    };
-  };
-}
-
-// src/tools/debate-task.ts
-import { z as z4 } from "zod";
-var schema = z4.object({
-  agent_ids: z4.array(z4.string()).min(2).max(5).describe("Agent IDs participating in the debate"),
-  task: z4.string().describe("Discussion topic or question"),
-  rounds: z4.number().int().min(1).max(5).default(3).describe("Number of discussion rounds"),
-  moderator_agent_id: z4.string().optional().describe("Agent ID for final synthesis")
-});
-function registerDebateTaskTool(server, deps) {
-  const description = `Runs a multi-round debate among sub-agents and produces a moderated conclusion. Available agents: ${deps.availableAgentIds.join(", ")}`;
-  server.tool("debate_task", description, schema.shape, async (args) => {
-    const result = await deps.debateTask({
-      agentIds: args.agent_ids,
-      task: args.task,
-      rounds: args.rounds,
-      moderatorAgentId: args.moderator_agent_id
-    });
-    const payload = {
-      status: result.error ? "partial_success" : "success",
-      conclusion: result.conclusion,
-      moderator_agent_id: result.moderator_agent_id,
-      total_rounds: result.total_rounds,
-      rounds: result.rounds.map((round) => ({
-        round: round.round,
-        responses: round.responses.map((item) => ({
-          agent_id: item.agent_id,
-          response: item.result.final_response,
-          metadata: {
-            run_id: item.result.run_id,
-            duration_ms: item.result.duration_ms,
-            stop_reason: item.result.stop_reason,
-            retries: item.result.retries ?? 0,
-            iterations: item.result.iterations,
-            tool_calls_made: item.result.tool_calls_made,
-            tokens: {
-              input: item.result.total_tokens.input,
-              output: item.result.total_tokens.output
-            }
-          },
-          ...item.result.error ? { error: item.result.error } : {}
-        }))
-      })),
-      total_tokens: result.total_tokens,
-      ...result.error ? { error: result.error } : {}
-    };
-    return {
-      content: [{ type: "text", text: JSON.stringify(payload, null, 2) }]
-    };
-  });
 }
 
 // src/tools/delegate-task.ts
-import { z as z5 } from "zod";
-var schema2 = z5.object({
-  agent_id: z5.string().describe("Agent ID to delegate the task to"),
-  task: z5.string().describe("Task instruction to send to the agent"),
-  context: z5.string().optional().describe("Additional context")
+import { z as z4 } from "zod";
+var schema = z4.object({
+  agent_id: z4.string().describe(
+    "One of the available agent IDs listed in the tool description."
+  ),
+  task: z4.string().describe(
+    "A clear, self-contained instruction. The agent only sees this text and context \u2014 include all necessary details."
+  ),
+  context: z4.string().optional().describe(
+    "Optional background information the agent needs. Pass relevant prior results or data here."
+  )
 });
 function registerDelegateTaskTool(server, deps) {
-  const description = `Delegates a single task to a specific sub-agent. Available agents: ${deps.availableAgentIds.join(", ")}`;
-  server.tool("delegate_task", description, schema2.shape, async (args) => {
+  const description = `[Use when] You need a specific sub-agent to perform a single, focused task. For complex requests, break into sub-tasks and call MULTIPLE TIMES IN PARALLEL. Available agents: ${deps.availableAgentIds.join(", ")}. [Input rules] agent_id: must be one of the available agents listed above. task: a clear, self-contained instruction \u2014 the agent only sees this and context. context (optional): background info or prior results the agent needs.`;
+  server.tool("delegate_task", description, schema.shape, async (args) => {
     const result = await deps.delegateTask(args.agent_id, args.task, args.context);
     const payload = {
       status: result.error ? "error" : "success",
@@ -2242,89 +1979,41 @@ function registerDelegateTaskTool(server, deps) {
   });
 }
 
-// src/tools/ensemble-task.ts
-import { z as z6 } from "zod";
-var schema3 = z6.object({
-  agent_ids: z6.array(z6.string()).min(2).max(5).describe("List of agent IDs to run the same task"),
-  task: z6.string().describe("Task to run in parallel"),
-  synthesize: z6.boolean().default(true).describe("Whether to synthesize the results"),
-  synthesizer_agent_id: z6.string().optional().describe("Agent ID used for result synthesis")
+// src/tools/perspectives-task.ts
+import { z as z5 } from "zod";
+var schema2 = z5.object({
+  task: z5.string().describe(
+    "The topic or question to analyze. Must be clear enough for 3 independent agents to interpret without extra context."
+  ),
+  context: z5.string().optional().describe(
+    "Summary of a previous round's perspectives for multi-round refinement. Omit on the first call. On subsequent calls, pass your synthesis so agents can deepen their analysis."
+  )
 });
-function registerEnsembleTaskTool(server, deps) {
-  const description = `Runs the same task in parallel across multiple sub-agents and synthesizes the outputs. Available agents: ${deps.availableAgentIds.join(", ")}`;
-  server.tool("ensemble_task", description, schema3.shape, async (args) => {
-    const result = await deps.ensembleTask({
-      agentIds: args.agent_ids,
+function registerPerspectivesTaskTool(server, deps) {
+  const description = "[Use when] You need multi-angle analysis from 3 fixed perspectives (creative, critical, logical) running in parallel. YOU must synthesize the raw responses. For deeper analysis, call again with context=your_synthesis. [Input rules] task: a clear topic or question for all 3 agents to analyze independently. context (optional): omit on first call; on follow-up calls, pass your synthesis of the previous round.";
+  server.tool("perspectives_task", description, schema2.shape, async (args) => {
+    const result = await deps.perspectivesTask({
       task: args.task,
-      synthesize: args.synthesize,
-      synthesizerAgentId: args.synthesizer_agent_id
+      context: args.context
     });
     const payload = {
-      status: result.synthesis_error || result.individual_results.some((item) => item.error) ? "partial_success" : "success",
-      synthesis: result.synthesis,
-      individual_results: result.individual_results.map((item) => ({
+      status: result.error ? "partial_success" : "success",
+      perspectives: result.perspectives.map((item) => ({
         agent_id: item.agent_id,
-        response: item.final_response,
+        response: item.result.final_response,
         metadata: {
-          run_id: item.run_id,
-          duration_ms: item.duration_ms,
-          stop_reason: item.stop_reason,
-          retries: item.retries ?? 0,
-          attempts: item.attempts,
-          retried: item.retried,
-          iterations: item.iterations,
-          tool_calls_made: item.tool_calls_made,
+          run_id: item.result.run_id,
+          duration_ms: item.result.duration_ms,
+          stop_reason: item.result.stop_reason,
+          retries: item.result.retries ?? 0,
+          iterations: item.result.iterations,
+          tool_calls_made: item.result.tool_calls_made,
           tokens: {
-            input: item.total_tokens.input,
-            output: item.total_tokens.output
+            input: item.result.total_tokens.input,
+            output: item.result.total_tokens.output
           }
         },
-        ...item.error ? { error: item.error } : {}
-      })),
-      total_tokens: result.total_tokens,
-      ...result.synthesis_agent_id ? { synthesis_agent_id: result.synthesis_agent_id } : {},
-      ...result.synthesis_error ? { synthesis_error: result.synthesis_error } : {}
-    };
-    return {
-      content: [{ type: "text", text: JSON.stringify(payload, null, 2) }]
-    };
-  });
-}
-
-// src/tools/pipeline-task.ts
-import { z as z7 } from "zod";
-var schema4 = z7.object({
-  steps: z7.array(
-    z7.object({
-      agent_id: z7.string().describe("Agent ID that executes this step"),
-      task: z7.string().describe("Task to execute in this step")
-    })
-  ).min(2).max(10).describe("Sequential pipeline steps")
-});
-function registerPipelineTaskTool(server, deps) {
-  const description = `Runs a multi-agent pipeline sequentially. Each step output is passed as context to the next step. Available agents: ${deps.availableAgentIds.join(", ")}`;
-  server.tool("pipeline_task", description, schema4.shape, async (args) => {
-    const result = await deps.pipelineTask(args.steps);
-    const payload = {
-      status: result.error ? "error" : "success",
-      final_output: result.final_output,
-      steps: result.steps.map((step) => ({
-        step: step.step,
-        agent_id: step.agent_id,
-        response: step.result.final_response,
-        metadata: {
-          run_id: step.result.run_id,
-          duration_ms: step.result.duration_ms,
-          stop_reason: step.result.stop_reason,
-          retries: step.result.retries ?? 0,
-          iterations: step.result.iterations,
-          tool_calls_made: step.result.tool_calls_made,
-          tokens: {
-            input: step.result.total_tokens.input,
-            output: step.result.total_tokens.output
-          }
-        },
-        ...step.result.error ? { error: step.result.error } : {}
+        ...item.result.error ? { error: item.result.error } : {}
       })),
       total_tokens: result.total_tokens,
       ...result.error ? { error: result.error } : {}
@@ -2336,11 +2025,11 @@ function registerPipelineTaskTool(server, deps) {
 }
 
 // src/tools/list-agents.ts
-import { z as z8 } from "zod";
-var schema5 = z8.object({});
+import { z as z6 } from "zod";
+var schema3 = z6.object({});
 function registerListAgentsTool(server, deps) {
-  const description = "Returns available sub-agents with role, model, and accessible tools.";
-  server.tool("list_agents", description, schema5.shape, async () => {
+  const description = "[Use when] You need to discover which agents are available, what roles they serve, which models they use, or what tools they can access \u2014 before deciding how to delegate. [Input rules] No parameters required.";
+  server.tool("list_agents", description, schema3.shape, async () => {
     const agents = {};
     const serverHealth = deps.mcpManager.getAllServerHealth();
     for (const [agentId, agent] of Object.entries(deps.agentsConfig.agents)) {
@@ -2381,36 +2070,20 @@ function createServer(deps) {
     mcpServersConfig: deps.mcpServersConfig,
     mcpManager: deps.mcpManager
   });
-  const ensembleTask = createEnsembleTaskExecutor({
+  const PERSPECTIVES_ONLY_AGENTS = /* @__PURE__ */ new Set(["creative", "critical", "logical"]);
+  const availableAgentIds = Object.keys(deps.agentsConfig.agents).filter(
+    (id) => !PERSPECTIVES_ONLY_AGENTS.has(id)
+  );
+  const perspectivesTask = createPerspectivesTaskExecutor({
     delegateTask,
-    maxParallelAgents: deps.env.MAX_PARALLEL_AGENTS,
-    retryEnabled: deps.env.ENSEMBLE_RETRY_ENABLED,
-    retryMaxAttempts: deps.env.ENSEMBLE_RETRY_MAX_ATTEMPTS
-  });
-  const pipelineTask = createPipelineTaskExecutor({
-    delegateTask
-  });
-  const availableAgentIds = Object.keys(deps.agentsConfig.agents);
-  const debateTask = createDebateTaskExecutor({
-    delegateTask,
-    maxParallelAgents: deps.env.MAX_PARALLEL_AGENTS,
-    availableAgentIds
+    maxParallelAgents: deps.env.MAX_PARALLEL_AGENTS
   });
   registerDelegateTaskTool(server, {
     delegateTask,
     availableAgentIds
   });
-  registerEnsembleTaskTool(server, {
-    ensembleTask,
-    availableAgentIds
-  });
-  registerPipelineTaskTool(server, {
-    pipelineTask,
-    availableAgentIds
-  });
-  registerDebateTaskTool(server, {
-    debateTask,
-    availableAgentIds
+  registerPerspectivesTaskTool(server, {
+    perspectivesTask
   });
   registerListAgentsTool(server, {
     agentsConfig: deps.agentsConfig,

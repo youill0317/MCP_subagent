@@ -11,7 +11,10 @@ interface RegisterListAgentsToolDeps {
 const schema = z.object({});
 
 export function registerListAgentsTool(server: McpServer, deps: RegisterListAgentsToolDeps): void {
-  const description = "Returns available sub-agents with role, model, and accessible tools.";
+  const description =
+    "[Use when] You need to discover which agents are available, what roles they serve, " +
+    "which models they use, or what tools they can access — before deciding how to delegate. " +
+    "[Input rules] No parameters required.";
 
   server.tool("list_agents", description, schema.shape, async () => {
     const agents: Record<string, unknown> = {};

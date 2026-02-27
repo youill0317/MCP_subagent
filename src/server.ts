@@ -4,13 +4,9 @@ import type { AppEnv } from "./config/env.js";
 import type { MCPServersConfig } from "./config/mcp-servers.js";
 import { MCPClientManager } from "./mcp-client/manager.js";
 import { createDelegateTaskExecutor } from "./orchestrator/delegate.js";
-import { createDebateTaskExecutor } from "./orchestrator/debate.js";
-import { createEnsembleTaskExecutor } from "./orchestrator/ensemble.js";
-import { createPipelineTaskExecutor } from "./orchestrator/pipeline.js";
-import { registerDebateTaskTool } from "./tools/debate-task.js";
+import { createPerspectivesTaskExecutor } from "./orchestrator/perspectives.js";
 import { registerDelegateTaskTool } from "./tools/delegate-task.js";
-import { registerEnsembleTaskTool } from "./tools/ensemble-task.js";
-import { registerPipelineTaskTool } from "./tools/pipeline-task.js";
+import { registerPerspectivesTaskTool } from "./tools/perspectives-task.js";
 import { registerListAgentsTool } from "./tools/list-agents.js";
 
 export interface CreateServerDeps {
@@ -33,23 +29,14 @@ export function createServer(deps: CreateServerDeps): McpServer {
     mcpManager: deps.mcpManager,
   });
 
-  const ensembleTask = createEnsembleTaskExecutor({
+  const PERSPECTIVES_ONLY_AGENTS = new Set(["creative", "critical", "logical"]);
+  const availableAgentIds = Object.keys(deps.agentsConfig.agents).filter(
+    (id) => !PERSPECTIVES_ONLY_AGENTS.has(id),
+  );
+
+  const perspectivesTask = createPerspectivesTaskExecutor({
     delegateTask,
     maxParallelAgents: deps.env.MAX_PARALLEL_AGENTS,
-    retryEnabled: deps.env.ENSEMBLE_RETRY_ENABLED,
-    retryMaxAttempts: deps.env.ENSEMBLE_RETRY_MAX_ATTEMPTS,
-  });
-
-  const pipelineTask = createPipelineTaskExecutor({
-    delegateTask,
-  });
-
-  const availableAgentIds = Object.keys(deps.agentsConfig.agents);
-
-  const debateTask = createDebateTaskExecutor({
-    delegateTask,
-    maxParallelAgents: deps.env.MAX_PARALLEL_AGENTS,
-    availableAgentIds,
   });
 
   registerDelegateTaskTool(server, {
@@ -57,19 +44,8 @@ export function createServer(deps: CreateServerDeps): McpServer {
     availableAgentIds,
   });
 
-  registerEnsembleTaskTool(server, {
-    ensembleTask,
-    availableAgentIds,
-  });
-
-  registerPipelineTaskTool(server, {
-    pipelineTask,
-    availableAgentIds,
-  });
-
-  registerDebateTaskTool(server, {
-    debateTask,
-    availableAgentIds,
+  registerPerspectivesTaskTool(server, {
+    perspectivesTask,
   });
 
   registerListAgentsTool(server, {
@@ -79,3 +55,4 @@ export function createServer(deps: CreateServerDeps): McpServer {
 
   return server;
 }
+
