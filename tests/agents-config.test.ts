@@ -63,3 +63,19 @@ test("loadAgentsConfig uses CODEX_MODEL_DEFAULT when codex agent has no model", 
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("default agents.json keeps delegate agents and removes reviewer", () => {
+  const config = loadAgentsConfig(createEnv());
+  const agentIds = Object.keys(config.agents).sort();
+
+  assert.deepEqual(
+    agentIds,
+    ["analyst", "creative", "critical", "logical", "researcher"],
+  );
+  assert.equal("reviewer" in config.agents, false);
+
+  for (const agent of Object.values(config.agents)) {
+    assert.equal(agent.system_prompt.includes("Allowed owner values:"), true);
+    assert.equal(agent.system_prompt.includes("reviewer"), false);
+  }
+});

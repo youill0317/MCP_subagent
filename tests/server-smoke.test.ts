@@ -1,9 +1,45 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createServer } from "../src/server.js";
+import { createServer, selectDelegateAgentIds } from "../src/server.js";
 import type { AgentsConfig } from "../src/config/agents.js";
 import type { AppEnv } from "../src/config/env.js";
 import { MCPClientManager } from "../src/mcp-client/manager.js";
+
+test("selectDelegateAgentIds exposes only researcher and analyst", () => {
+  const agentsConfig: AgentsConfig = {
+    agents: {
+      researcher: {
+        name: "researcher",
+        description: "research",
+        provider: "anthropic",
+        model: "claude-sonnet-4-20250514",
+        system_prompt: "prompt",
+        mcp_servers: [],
+        max_iterations: 5,
+      },
+      analyst: {
+        name: "analyst",
+        description: "analysis",
+        provider: "anthropic",
+        model: "claude-sonnet-4-20250514",
+        system_prompt: "prompt",
+        mcp_servers: [],
+        max_iterations: 5,
+      },
+      creative: {
+        name: "creative",
+        description: "creative",
+        provider: "anthropic",
+        model: "claude-sonnet-4-20250514",
+        system_prompt: "prompt",
+        mcp_servers: [],
+        max_iterations: 5,
+      },
+    },
+  };
+
+  assert.deepEqual(selectDelegateAgentIds(agentsConfig), ["researcher", "analyst"]);
+});
 
 test("createServer smoke test", () => {
   const env: AppEnv = {

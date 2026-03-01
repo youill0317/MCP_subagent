@@ -16,6 +16,12 @@ export interface CreateServerDeps {
   mcpManager: MCPClientManager;
 }
 
+const DELEGATE_AGENT_ALLOWLIST = ["researcher", "analyst"] as const;
+
+export function selectDelegateAgentIds(agentsConfig: AgentsConfig): string[] {
+  return DELEGATE_AGENT_ALLOWLIST.filter((id) => id in agentsConfig.agents);
+}
+
 export function createServer(deps: CreateServerDeps): McpServer {
   const server = new McpServer({
     name: "mcp-subagent-server",
@@ -29,10 +35,7 @@ export function createServer(deps: CreateServerDeps): McpServer {
     mcpManager: deps.mcpManager,
   });
 
-  const PERSPECTIVES_ONLY_AGENTS = new Set(["creative", "critical", "logical"]);
-  const availableAgentIds = Object.keys(deps.agentsConfig.agents).filter(
-    (id) => !PERSPECTIVES_ONLY_AGENTS.has(id),
-  );
+  const availableAgentIds = selectDelegateAgentIds(deps.agentsConfig);
 
   const perspectivesTask = createPerspectivesTaskExecutor({
     delegateTask,
@@ -55,4 +58,3 @@ export function createServer(deps: CreateServerDeps): McpServer {
 
   return server;
 }
-
