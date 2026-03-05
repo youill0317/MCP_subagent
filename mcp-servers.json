@@ -21,6 +21,13 @@
         "MARKDOWN_BASE_DIR": "C:\\Users\\user\\Documents\\Projects\\Projects"
       },
       "description": "Provides tools to browse and read Obsidian markdown files"
+    },
+    "mcp_skills": {
+      "command": "node",
+      "args": [
+        "C:\\Users\\user\\Documents\\Projects_src\\MCP\\MCP_skills\\dist\\server.js"
+      ],
+      "description": "Provides skill-based structured workflows using SKILL.md folders"
     }
   }
 }
