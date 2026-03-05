@@ -367,14 +367,8 @@ function toStringEnv(
   }
 
   for (const [key, value] of Object.entries(overrides)) {
-    env[key] = resolveEnvValue(value, baseEnv);
+    env[key] = value;
   }
 
   return env;
-}
-
-function resolveEnvValue(value: string, baseEnv: NodeJS.ProcessEnv): string {
-  return value.replace(/\$\{([^}]+)}/g, (_match, varName: string) => {
-    return baseEnv[varName] ?? "";
-  });
 }
