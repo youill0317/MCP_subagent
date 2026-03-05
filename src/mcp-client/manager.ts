@@ -242,7 +242,7 @@ export class MCPClientManager {
 
     const connection = this.connections.get(name);
     if (connection) {
-      void connection.client.close().catch(() => {});
+      void connection.client.close().catch(() => { });
       this.connections.delete(name);
     }
 
@@ -367,8 +367,14 @@ function toStringEnv(
   }
 
   for (const [key, value] of Object.entries(overrides)) {
-    env[key] = value;
+    env[key] = resolveEnvValue(value, baseEnv);
   }
 
   return env;
+}
+
+function resolveEnvValue(value: string, baseEnv: NodeJS.ProcessEnv): string {
+  return value.replace(/\$\{([^}]+)}/g, (_match, varName: string) => {
+    return baseEnv[varName] ?? "";
+  });
 }

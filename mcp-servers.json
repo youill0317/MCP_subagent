@@ -1,16 +1,17 @@
 {
   "servers": {
     "mcp_search": {
-      "command": "npx",
+      "command": "node",
       "args": [
-        "-y",
-        "mcp-remote",
-        "https://mcp.exa.ai/mcp?tools=web_search_exa,web_search_advanced_exa,get_code_context_exa,crawling_exa,company_research_exa,people_search_exa,deep_researcher_start,deep_researcher_check"
+        "C:\\Users\\user\\Documents\\Projects_src\\MCP\\MCP_search\\dist\\index.js"
       ],
       "env": {
-        "EXA_API_KEY": "${EXA_API_KEY}"
+        "BRAVE_API_KEY": "${BRAVE_API_KEY}",
+        "TAVILY_API_KEY": "${TAVILY_API_KEY}",
+        "EXA_API_KEY": "${EXA_API_KEY}",
+        "SEMANTIC_SCHOLAR_API_KEY": "${SEMANTIC_SCHOLAR_API_KEY}"
       },
-      "description": "Provides Exa web search and research tools"
+      "description": "Provides unified search across Brave, Tavily, Exa, Semantic Scholar, and arXiv"
     },
     "mcp_obsidian": {
       "command": "node",
