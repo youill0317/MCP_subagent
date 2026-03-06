@@ -194,7 +194,7 @@ export class MCPClientManager {
       command: config.command,
       args: config.args,
       ...(config.cwd ? { cwd: config.cwd } : {}),
-      env: toStringEnv(process.env, config.env),
+      env: toStringEnv(process.env),
     });
 
     await client.connect(transport);
@@ -356,7 +356,6 @@ function extractToolResultText(result: unknown): string {
 
 function toStringEnv(
   baseEnv: NodeJS.ProcessEnv,
-  overrides: Record<string, string>,
 ): Record<string, string> {
   const env: Record<string, string> = {};
 
@@ -364,10 +363,6 @@ function toStringEnv(
     if (typeof value === "string") {
       env[key] = value;
     }
-  }
-
-  for (const [key, value] of Object.entries(overrides)) {
-    env[key] = value;
   }
 
   return env;

@@ -11,9 +11,7 @@ import { logger } from "./utils/logger.js";
 
 async function main(): Promise<void> {
   const env = loadEnv();
-  const mcpServersConfig = loadMCPServersConfig(undefined, {
-    strictEnv: env.STRICT_CONFIG_VALIDATION,
-  });
+  const mcpServersConfig = loadMCPServersConfig();
   const agentsConfig = loadAgentsConfig(env);
   if (env.STRICT_CONFIG_VALIDATION) {
     validateAgentsAgainstMCPServers(agentsConfig, mcpServersConfig);
@@ -25,7 +23,6 @@ async function main(): Promise<void> {
   const server = createServer({
     env,
     agentsConfig,
-    mcpServersConfig,
     mcpManager,
   });
 

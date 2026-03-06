@@ -6,7 +6,7 @@ import type { MCPServersConfig } from "./mcp-servers.js";
 
 const AgentPresetSchema = z.object({
   description: z.string().min(1),
-  provider: z.enum(["openai", "anthropic", "google", "custom", "codex"]).optional(),
+  provider: z.enum(["openai", "anthropic", "google", "custom"]).optional(),
   model: z.string().trim().min(1).optional(),
   system_prompt: z.string().min(1),
   mcp_servers: z.array(z.string().min(1)).default([]),
@@ -45,8 +45,7 @@ export function loadAgentsConfig(
   const agents: Record<string, AgentConfig> = {};
   for (const [name, preset] of Object.entries(parsed.agents)) {
     const provider = preset.provider ?? env.DEFAULT_PROVIDER;
-    const model = preset.model
-      ?? (provider === "codex" ? env.CODEX_MODEL_DEFAULT : env.DEFAULT_MODEL);
+    const model = preset.model ?? env.DEFAULT_MODEL;
 
     agents[name] = {
       name,

@@ -12,9 +12,6 @@ function createEnv(): AppEnv {
     ANTHROPIC_API_KEY: "anthropic-key",
     GOOGLE_API_KEY: "google-key",
     CUSTOM_API_KEY: "custom-key",
-    CODEX_ENABLED: true,
-    CODEX_CLI_PATH: "codex",
-    CODEX_MODEL_DEFAULT: "gpt-5-codex",
     OPENAI_BASE_URL: "https://api.openai.com/v1",
     ANTHROPIC_BASE_URL: "https://api.anthropic.com/v1",
     GOOGLE_BASE_URL: "https://generativelanguage.googleapis.com/v1beta",
@@ -32,21 +29,20 @@ function createEnv(): AppEnv {
       anthropic: "anthropic-key",
       google: "google-key",
       custom: "custom-key",
-      codex: undefined,
     },
-    enabledProviders: ["openai", "anthropic", "google", "custom", "codex"],
+    enabledProviders: ["openai", "anthropic", "google", "custom"],
   };
 }
 
-test("loadAgentsConfig uses CODEX_MODEL_DEFAULT when codex agent has no model", () => {
+test("loadAgentsConfig uses DEFAULT_MODEL when agent model is omitted", () => {
   const tempDir = mkdtempSync(path.join(tmpdir(), "agents-config-"));
   const filePath = path.join(tempDir, "agents.json");
 
   writeFileSync(filePath, JSON.stringify({
     agents: {
-      codex_worker: {
-        description: "Codex-backed agent",
-        provider: "codex",
+      analyst_worker: {
+        description: "Anthropic-backed agent",
+        provider: "anthropic",
         system_prompt: "Use tools when needed",
         mcp_servers: [],
       },
@@ -55,10 +51,34 @@ test("loadAgentsConfig uses CODEX_MODEL_DEFAULT when codex agent has no model", 
 
   try {
     const config = loadAgentsConfig(createEnv(), filePath);
-    const agent = config.agents.codex_worker;
+    const agent = config.agents.analyst_worker;
     assert.ok(agent);
-    assert.equal(agent.provider, "codex");
-    assert.equal(agent.model, "gpt-5-codex");
+    assert.equal(agent.provider, "anthropic");
+    assert.equal(agent.model, "claude-sonnet-4-20250514");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("loadAgentsConfig rejects codex provider", () => {
+  const tempDir = mkdtempSync(path.join(tmpdir(), "agents-config-"));
+  const filePath = path.join(tempDir, "agents.json");
+
+  writeFileSync(filePath, JSON.stringify({
+    agents: {
+      legacy_worker: {
+        description: "Legacy codex agent",
+        provider: "codex",
+        system_prompt: "Use tools when needed",
+        mcp_servers: [],
+      },
+    },
+  }, null, 2));
+
+  try {
+    assert.throws(() => {
+      loadAgentsConfig(createEnv(), filePath);
+    }, /Invalid enum value/);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

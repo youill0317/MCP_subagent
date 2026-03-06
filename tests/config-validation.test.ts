@@ -2,13 +2,11 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test, { after } from "node:test";
+import test from "node:test";
 import type { AgentsConfig } from "../src/config/agents.js";
 import { validateAgentsAgainstMCPServers } from "../src/config/agents.js";
 import type { MCPServersConfig } from "../src/config/mcp-servers.js";
 import { loadMCPServersConfig } from "../src/config/mcp-servers.js";
-
-const originalEnvValue = process.env.TEST_MCP_SECRET;
 
 test("validateAgentsAgainstMCPServers throws on unknown server reference", () => {
   const agentsConfig: AgentsConfig = {
@@ -31,7 +29,6 @@ test("validateAgentsAgainstMCPServers throws on unknown server reference", () =>
       search: {
         command: "node",
         args: [],
-        env: {},
       },
     },
   };
@@ -41,11 +38,10 @@ test("validateAgentsAgainstMCPServers throws on unknown server reference", () =>
   }, /undefined MCP server/);
 });
 
-test("loadMCPServersConfig enforces strict env template resolution", () => {
-  delete process.env.TEST_MCP_SECRET;
-
+test("loadMCPServersConfig rejects per-server env overrides", () => {
   const tempDir = mkdtempSync(path.join(tmpdir(), "mcp-config-"));
   const filePath = path.join(tempDir, "mcp-servers.json");
+
   writeFileSync(
     filePath,
     JSON.stringify(
@@ -54,9 +50,7 @@ test("loadMCPServersConfig enforces strict env template resolution", () => {
           demo: {
             command: "node",
             args: ["server.js"],
-            env: {
-              SECRET: "${TEST_MCP_SECRET}",
-            },
+            env: { SECRET: "value" },
           },
         },
       },
@@ -67,21 +61,38 @@ test("loadMCPServersConfig enforces strict env template resolution", () => {
 
   try {
     assert.throws(() => {
-      loadMCPServersConfig(filePath, { strictEnv: true });
-    }, /Missing environment variable/);
-
-    const loose = loadMCPServersConfig(filePath, { strictEnv: false });
-    assert.equal(loose.servers.demo.env.SECRET, "");
+      loadMCPServersConfig(filePath);
+    }, /Unrecognized key\(s\) in object: 'env'/);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
 
-after(() => {
-  if (originalEnvValue === undefined) {
-    delete process.env.TEST_MCP_SECRET;
-    return;
-  }
+test("loadMCPServersConfig rejects template placeholders", () => {
+  const tempDir = mkdtempSync(path.join(tmpdir(), "mcp-config-"));
+  const filePath = path.join(tempDir, "mcp-servers.json");
 
-  process.env.TEST_MCP_SECRET = originalEnvValue;
+  writeFileSync(
+    filePath,
+    JSON.stringify(
+      {
+        servers: {
+          demo: {
+            command: "node",
+            args: ["${MCP_DEMO_PATH}"],
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  try {
+    assert.throws(() => {
+      loadMCPServersConfig(filePath);
+    }, /Template placeholder is not supported/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });

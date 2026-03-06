@@ -1,7 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AgentsConfig } from "./config/agents.js";
 import type { AppEnv } from "./config/env.js";
-import type { MCPServersConfig } from "./config/mcp-servers.js";
 import { MCPClientManager } from "./mcp-client/manager.js";
 import { createDelegateTaskExecutor } from "./orchestrator/delegate.js";
 import { createPerspectivesTaskExecutor } from "./orchestrator/perspectives.js";
@@ -12,7 +11,6 @@ import { registerListAgentsTool } from "./tools/list-agents.js";
 export interface CreateServerDeps {
   env: AppEnv;
   agentsConfig: AgentsConfig;
-  mcpServersConfig: MCPServersConfig;
   mcpManager: MCPClientManager;
 }
 
@@ -31,7 +29,6 @@ export function createServer(deps: CreateServerDeps): McpServer {
   const delegateTask = createDelegateTaskExecutor({
     agentsConfig: deps.agentsConfig,
     env: deps.env,
-    mcpServersConfig: deps.mcpServersConfig,
     mcpManager: deps.mcpManager,
   });
 

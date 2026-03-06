@@ -1,14 +1,10 @@
-import path from "node:path";
-import { config as loadDotEnv } from "dotenv";
 import { z } from "zod";
 
-const PROVIDERS = ["openai", "anthropic", "google", "custom", "codex"] as const;
+const PROVIDERS = ["openai", "anthropic", "google", "custom"] as const;
 const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1";
 const DEFAULT_GOOGLE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 const DEFAULT_CUSTOM_BASE_URL = DEFAULT_OPENAI_BASE_URL;
-const DEFAULT_CODEX_CLI_PATH = "codex";
-const DEFAULT_CODEX_MODEL = "gpt-5-codex";
 
 export type LLMProvider = (typeof PROVIDERS)[number];
 
@@ -17,9 +13,6 @@ export interface AppEnv {
   ANTHROPIC_API_KEY?: string;
   GOOGLE_API_KEY?: string;
   CUSTOM_API_KEY?: string;
-  CODEX_ENABLED: boolean;
-  CODEX_CLI_PATH: string;
-  CODEX_MODEL_DEFAULT: string;
   OPENAI_BASE_URL: string;
   ANTHROPIC_BASE_URL: string;
   GOOGLE_BASE_URL: string;
@@ -86,9 +79,6 @@ const EnvSchema = z.object({
   ANTHROPIC_API_KEY: z.string().trim().optional(),
   GOOGLE_API_KEY: z.string().trim().optional(),
   CUSTOM_API_KEY: z.string().trim().optional(),
-  CODEX_ENABLED: BooleanEnvSchema.default(false),
-  CODEX_CLI_PATH: z.string().trim().optional(),
-  CODEX_MODEL_DEFAULT: z.string().trim().optional(),
   OPENAI_BASE_URL: z.string().trim().optional(),
   ANTHROPIC_BASE_URL: z.string().trim().optional(),
   GOOGLE_BASE_URL: z.string().trim().optional(),
@@ -110,12 +100,10 @@ const EnvSchema = z.object({
 
 let cachedEnv: AppEnv | null = null;
 
-export function loadEnv(envPath = path.resolve(process.cwd(), ".env")): AppEnv {
+export function loadEnv(): AppEnv {
   if (cachedEnv) {
     return cachedEnv;
   }
-
-  loadDotEnv({ path: envPath });
 
   const parsed = EnvSchema.parse(process.env);
   const normalized = {
@@ -123,9 +111,6 @@ export function loadEnv(envPath = path.resolve(process.cwd(), ".env")): AppEnv {
     ANTHROPIC_API_KEY: normalizeOptional(parsed.ANTHROPIC_API_KEY),
     GOOGLE_API_KEY: normalizeOptional(parsed.GOOGLE_API_KEY),
     CUSTOM_API_KEY: normalizeOptional(parsed.CUSTOM_API_KEY),
-    CODEX_ENABLED: parsed.CODEX_ENABLED,
-    CODEX_CLI_PATH: normalizeBaseValue(parsed.CODEX_CLI_PATH, DEFAULT_CODEX_CLI_PATH),
-    CODEX_MODEL_DEFAULT: normalizeBaseValue(parsed.CODEX_MODEL_DEFAULT, DEFAULT_CODEX_MODEL),
     OPENAI_BASE_URL: normalizeBaseUrl(parsed.OPENAI_BASE_URL, DEFAULT_OPENAI_BASE_URL),
     ANTHROPIC_BASE_URL: normalizeBaseUrl(parsed.ANTHROPIC_BASE_URL, DEFAULT_ANTHROPIC_BASE_URL),
     GOOGLE_BASE_URL: normalizeBaseUrl(parsed.GOOGLE_BASE_URL, DEFAULT_GOOGLE_BASE_URL),
@@ -150,26 +135,16 @@ export function loadEnv(envPath = path.resolve(process.cwd(), ".env")): AppEnv {
     anthropic: normalized.ANTHROPIC_API_KEY,
     google: normalized.GOOGLE_API_KEY,
     custom: normalized.CUSTOM_API_KEY,
-    codex: undefined,
   };
 
-  const enabledProviders = PROVIDERS.filter((provider) => {
-    if (provider === "codex") {
-      return normalized.CODEX_ENABLED;
-    }
-    return Boolean(providerApiKeys[provider]);
-  });
+  const enabledProviders = PROVIDERS.filter((provider) => Boolean(providerApiKeys[provider]));
 
   if (enabledProviders.length === 0) {
-    throw new Error("No enabled LLM provider. Configure API keys or enable Codex with CODEX_ENABLED=true.");
+    throw new Error("No enabled LLM provider. Configure at least one provider API key.");
   }
 
   const defaultProvider: LLMProvider = normalized.DEFAULT_PROVIDER;
   if (!enabledProviders.includes(defaultProvider)) {
-    if (defaultProvider === "codex") {
-      throw new Error("DEFAULT_PROVIDER=codex requires CODEX_ENABLED=true.");
-    }
-
     throw new Error(
       `DEFAULT_PROVIDER=${defaultProvider} is not enabled. Configure ${defaultProvider.toUpperCase()}_API_KEY or switch DEFAULT_PROVIDER.`,
     );

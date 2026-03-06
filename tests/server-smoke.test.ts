@@ -43,9 +43,6 @@ test("selectDelegateAgentIds exposes only researcher and analyst", () => {
 
 test("createServer smoke test", () => {
   const env: AppEnv = {
-    CODEX_ENABLED: false,
-    CODEX_CLI_PATH: "codex",
-    CODEX_MODEL_DEFAULT: "gpt-5-codex",
     OPENAI_BASE_URL: "https://api.openai.com/v1",
     ANTHROPIC_BASE_URL: "https://api.anthropic.com/v1",
     GOOGLE_BASE_URL: "https://generativelanguage.googleapis.com/v1beta",
@@ -63,9 +60,8 @@ test("createServer smoke test", () => {
       anthropic: "y",
       google: "z",
       custom: "c",
-      codex: undefined,
     },
-    enabledProviders: ["openai", "anthropic", "google"],
+    enabledProviders: ["openai", "anthropic", "google", "custom"],
   };
 
   const agentsConfig: AgentsConfig = {
@@ -87,7 +83,6 @@ test("createServer smoke test", () => {
   const server = createServer({
     env,
     agentsConfig,
-    mcpServersConfig: { servers: {} },
     mcpManager,
   });
 

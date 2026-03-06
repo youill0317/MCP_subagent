@@ -3,29 +3,21 @@
     "mcp_search": {
       "command": "node",
       "args": [
-        "C:\\Users\\user\\Documents\\Projects_src\\MCP\\MCP_search\\dist\\index.js"
+        "../MCP_search/dist/index.js"
       ],
-      "env": {
-        "BRAVE_API_KEY": "${BRAVE_API_KEY}",
-        "TAVILY_API_KEY": "${TAVILY_API_KEY}",
-        "EXA_API_KEY": "${EXA_API_KEY}"
-      },
       "description": "Provides unified search across Brave, Tavily, Exa, Semantic Scholar, and arXiv"
     },
     "mcp_obsidian": {
       "command": "node",
       "args": [
-        "C:\\Users\\user\\Documents\\Projects_src\\MCP\\MCP_Obsidian\\dist\\index.js"
+        "../MCP_Obsidian/dist/index.js"
       ],
-      "env": {
-        "MARKDOWN_BASE_DIR": "${MARKDOWN_BASE_DIR}"
-      },
       "description": "Provides tools to browse and read Obsidian markdown files"
     },
     "mcp_skills": {
       "command": "node",
       "args": [
-        "C:\\Users\\user\\Documents\\Projects_src\\MCP\\MCP_skills\\dist\\server.js"
+        "../MCP_skills/dist/server.js"
       ],
       "description": "Provides skill-based structured workflows using SKILL.md folders"
     }

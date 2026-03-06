@@ -3,8 +3,6 @@ import type { LLMClient } from "./types.js";
 import { OpenAIClient } from "./openai-client.js";
 import { AnthropicClient } from "./anthropic-client.js";
 import { GoogleClient } from "./google-client.js";
-import { CodexCliClient } from "./codex-cli-client.js";
-import type { CodexCliClientOptions } from "./codex-cli-client.js";
 
 export interface LLMBaseUrls {
   openai: string;
@@ -21,7 +19,6 @@ export interface CustomClientOptions {
 }
 
 export interface CreateLLMClientOptions {
-  codex?: CodexCliClientOptions;
   custom?: CustomClientOptions;
 }
 
@@ -52,11 +49,6 @@ export function createLLMClient(
         throw new Error("custom API key is not configured");
       }
       return new OpenAIClient(apiKey, baseUrls.custom, options.custom);
-    case "codex":
-      if (!options.codex) {
-        throw new Error("codex options are required");
-      }
-      return new CodexCliClient(options.codex);
     default:
       throw new Error(`Unknown provider: ${provider}`);
   }
