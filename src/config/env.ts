@@ -1,7 +1,6 @@
 import path from "node:path";
 import { config as loadDotEnv } from "dotenv";
 import { z } from "zod";
-import { logger } from "../utils/logger.js";
 
 const PROVIDERS = ["openai", "anthropic", "google", "custom", "codex"] as const;
 const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
@@ -63,6 +62,9 @@ const OptionalBooleanEnvSchema = z.preprocess((value) => {
   if (value === undefined) {
     return undefined;
   }
+  if (typeof value === "string" && value.trim() === "") {
+    return undefined;
+  }
   if (typeof value === "boolean") {
     return value;
   }
@@ -101,7 +103,7 @@ const EnvSchema = z.object({
   MAX_PARALLEL_AGENTS: z.coerce.number().int().min(1).max(20).default(5),
   AGENT_TIMEOUT_MS: z.coerce.number().int().min(1000).default(300_000),
 
-  STRICT_CONFIG_VALIDATION: BooleanEnvSchema.default(true),
+  STRICT_CONFIG_VALIDATION: BooleanEnvSchema.default(false),
   RATE_LIMIT_CAPACITY: z.coerce.number().min(1).default(10),
   RATE_LIMIT_REFILL_PER_SECOND: z.coerce.number().positive().default(5),
 });
@@ -158,30 +160,19 @@ export function loadEnv(envPath = path.resolve(process.cwd(), ".env")): AppEnv {
     return Boolean(providerApiKeys[provider]);
   });
 
-  for (const provider of PROVIDERS) {
-    if (provider === "codex") {
-      if (!normalized.CODEX_ENABLED) {
-        logger.warn("codex disabled (CODEX_ENABLED=false)");
-      }
-      continue;
-    }
-
-    if (!providerApiKeys[provider]) {
-      logger.warn(`${provider} disabled (no API key)`);
-    }
-  }
-
   if (enabledProviders.length === 0) {
     throw new Error("No enabled LLM provider. Configure API keys or enable Codex with CODEX_ENABLED=true.");
   }
 
-  let defaultProvider: LLMProvider = normalized.DEFAULT_PROVIDER;
+  const defaultProvider: LLMProvider = normalized.DEFAULT_PROVIDER;
   if (!enabledProviders.includes(defaultProvider)) {
-    defaultProvider = enabledProviders[0];
-    logger.warn("DEFAULT_PROVIDER is unavailable; falling back to first enabled provider", {
-      requested: normalized.DEFAULT_PROVIDER,
-      fallback: defaultProvider,
-    });
+    if (defaultProvider === "codex") {
+      throw new Error("DEFAULT_PROVIDER=codex requires CODEX_ENABLED=true.");
+    }
+
+    throw new Error(
+      `DEFAULT_PROVIDER=${defaultProvider} is not enabled. Configure ${defaultProvider.toUpperCase()}_API_KEY or switch DEFAULT_PROVIDER.`,
+    );
   }
 
   cachedEnv = {
