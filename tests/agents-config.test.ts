@@ -87,6 +87,13 @@ test("loadAgentsConfig rejects codex provider", () => {
 test("default agents.json keeps delegate agents and removes reviewer", () => {
   const config = loadAgentsConfig(createEnv());
   const agentIds = Object.keys(config.agents).sort();
+  const requiredSections = [
+    "## Role & Scope",
+    "## Output Contract",
+    "## Tool Orchestration Policy",
+    "## Tool Selection Hints",
+    "## Role-Specific Rules",
+  ];
 
   assert.deepEqual(
     agentIds,
@@ -95,7 +102,30 @@ test("default agents.json keeps delegate agents and removes reviewer", () => {
   assert.equal("reviewer" in config.agents, false);
 
   for (const agent of Object.values(config.agents)) {
+    for (const section of requiredSections) {
+      assert.equal(agent.system_prompt.includes(section), true);
+    }
     assert.equal(agent.system_prompt.includes("Allowed owner values:"), true);
     assert.equal(agent.system_prompt.includes("reviewer"), false);
+  }
+
+  for (const agentId of ["researcher", "analyst"]) {
+    const prompt = config.agents[agentId]?.system_prompt ?? "";
+    assert.equal(prompt.includes("use MCP tools proactively before answering"), true);
+  }
+
+  assert.equal(
+    config.agents.researcher?.system_prompt.includes("Use MCP Search tools for web retrieval"),
+    true,
+  );
+  assert.equal(
+    config.agents.analyst?.system_prompt.includes("Use `search_markdown` first when file paths are unknown."),
+    true,
+  );
+
+  for (const agentId of ["creative", "critical", "logical"]) {
+    const prompt = config.agents[agentId]?.system_prompt ?? "";
+    assert.equal(prompt.includes("You do not have MCP tools available in this role."), true);
+    assert.equal(prompt.includes("Never claim to have searched, verified, or retrieved information."), true);
   }
 });
